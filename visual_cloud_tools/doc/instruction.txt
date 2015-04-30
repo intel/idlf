@@ -1,0 +1,44 @@
+This is accompanying demo for IDLF project.
+
+Installation instructions:
+
+    Prerequisites:
+        * 64bit Linux distribution with Intel Enterprise OpenCL installed (Tested on Fedora 21  and CentOS 7 but it should work on any other that have OpenCL installed)
+          or 64bit Windows with Intel OpenCL installed 
+        * cmake 
+        * Freeimage lib (Linux requirement as binary for windows is provided)
+          Windows: Put FreeImage.dll into folder "visual_cloud_tools\demo_bin"
+        * GCC 4.9+ or ICC compiler  
+        * Haswell class CPU and/or GPU on target platform.
+        * weights data (Neural network parameters according to caffenet model)
+        * some images to be recognized
+        * already build IDLF device you want to use to run this demo against (device_cpu or device_gpu etc.)
+
+    Building steps:
+        1)	Having IDLF libs all build, we are to build demo. Go to visual_cloud_tools eg.
+            cd <path to Visual Cloud project>/visual_cloud_tools
+        2)	Generate build system (Visual Studio solution):
+            * Linux(for GCC, makefiles): ./create_unixmake_gcc.sh  
+            * Windows(for ICC Visual Studio solution): create_msvc_icc.bat       
+        3)	Building of demo: 
+            * Linux: cd UnixMk/Release; make; make install
+            * windows: Open sln file in Visual studio and have BUILD_ALL completed. Next execute INSTALL target
+        4)	Here you will need some images for recognition and weights (configuration data of Neural Network)
+            They are not within repo (its over 200MB of binary data so we do not keep it in our Git repo).
+        5)	Before we have it running, go to demo_bin directory (visual_clouds_tools/demo_bin).  Now we need to edit
+            Configuration file to select which device we want to test and which CNN model. There is an example
+            "config_readme.txt" in demo_bin directory.
+ 
+        6)	Now demo app is dynamically loading requested device (at runtime) so we need to point out where our IDLF device is:
+            * Linux: export LD_LIBRARY_PATH=<path to VisualCloud>/intel_visual_cloud_node/UnixMk/Release/bin
+            * Windows: copy wanted IDLF device to demo_bin directory 
+
+        7)	Running demo takes place from demo_bin: 
+            * Linux: ./visual_cloud_demo --config=<config file eg. config.cfg>
+            * Windows: visual_cloud_demo --config=<config file eg. config.cfg>
+
+     And that it, it will take several seconds and at the very end index.html will be returned and web browser (lynx for linux and default web browser for windows) shall be started. 
+     You can open index.html using any other web browser. If everything is fine you should see scaled down images along with guesses of DLF (our lib) about its content 
+     as well as total time it took and time per image to be recognized it took.
+
+
