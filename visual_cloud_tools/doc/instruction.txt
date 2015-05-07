@@ -28,12 +28,14 @@ Installation instructions:
         5)	Before we have it running, go to demo_bin directory (visual_clouds_tools/demo_bin).  Now we need to edit
             Configuration file to select which device we want to test and which CNN model. There is an example
             "config_readme.txt" in demo_bin directory.
- 
         6)	Now demo app is dynamically loading requested device (at runtime) so we need to point out where our IDLF device is:
             * Linux: export LD_LIBRARY_PATH=<path to VisualCloud>/intel_visual_cloud_node/UnixMk/Release/bin
             * Windows: copy wanted IDLF device to demo_bin directory 
-
-        7)	Running demo takes place from demo_bin: 
+        7)	For proper working the demo application, the files with weights and biases are required.
+            The file, with the weights, is available at: 
+            01.org/sites/default/files/downloads/intel-deep-learning-framework/weightscaffenet.zip
+            Unpack the downloaded file to a directory: visual_cloud_demo
+        8)	Running demo takes place from demo_bin: 
             * Linux: ./visual_cloud_demo --config=<config file eg. config.cfg>
             * Windows: visual_cloud_demo --config=<config file eg. config.cfg>
 
