@@ -1,0 +1,236 @@
+/*
+Copyright (c) 2015, Intel Corporation
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice,
+      this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of Intel Corporation nor the names of its contributors
+      may be used to endorse or promote products derived from this software
+      without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
+#include "tester/common/test_aggregator.h"
+#include "tester/common/workflows_for_tests.h"  // If test needs a workflow definition
+#include "tester/common/test_common_tools.h"
+#include "common/time_control.h"
+#include <numeric>
+
+class test_template: public test_base
+{
+private:
+    tested_device*            current_tested_device;
+    nn_device_interface_0_t*  di;
+
+    bool init();
+    bool done();
+    void cleanup();
+
+    // If test needs a workflow definition
+    workflows_for_tests_base    *workflow_wrapper;
+    nn_workflow_t               *workflow;
+
+    // Add current test specific variables
+
+public:
+    test_template() { test_description = "a few keywords describing the test"; };
+    ~test_template() {};
+    bool run();
+};
+
+bool test_template::init()
+{
+    bool  init_ok = true;
+    test_measurement_result   init_result;
+    init_result.description = "INIT: " + test_description;
+
+    C_time_control            init_timer;
+
+    try {
+        if(devices!=nullptr)  {
+            current_tested_device = devices->get("device_cpu"+dynamic_library_extension);  // or
+            di = current_tested_device->get_device_interface();
+        }
+        else  throw std::runtime_error(std::string("Can't find aggregator of devices"));
+        // TODO: here code of test initiation:
+        // If test needs a workflow definition
+        workflow_wrapper = workflows_for_tests::instance().get("name_of_the_desired_workflow");
+        workflow = workflow_wrapper->init_test_workflow(di);
+        if(workflow == nullptr)  throw std::runtime_error("Workflow has not been initialized");
+        // END test initiation
+        init_ok = true;
+    }
+    catch(std::runtime_error &error) {
+        init_result << "error: " + std::string(error.what());
+        init_ok = false;
+    }
+    catch(...) {
+        init_result << "unknown error";
+        init_ok = false;
+    }
+
+    init_timer.tock();
+    init_result.time_consumed = init_timer.get_time_diff();
+    init_result.clocks_consumed = init_timer.get_clocks_diff();
+    init_result.passed = init_ok;
+
+    tests_results << init_result;
+
+    return init_ok;
+}
+
+bool test_template::run()
+{
+    bool  run_ok = true;
+    test_measurement_result   run_result;
+    run_result.description = "RUN SUMMARY: " + test_description;
+
+    C_time_control  run_timer;
+
+    std::cout << "-> Testing: " << test_description << std::endl;
+
+    try {
+        if(!init()) throw std::runtime_error("init() returns false so can't run test");
+        run_timer.tick();   //start time measurement
+        run_result << std::string("run test with " + current_tested_device->get_device_description());
+
+        // // ---------------------------------------------------------------------------------------------------------
+        // TODO: here test code
+        //{   // simple sample pattern of test with time measuring:
+        //    bool local_ok=true;
+        //    test_measurement_result local_result;
+        //    local_result.description = "RUN PART: (name part) of " + test_description;
+        //    C_time_control  local_timer;
+        //    // begin local test
+
+        //    // end of local test
+        //    // summary:
+        //    local_timer.tock();
+        //    local_result.time_consumed = local_timer.time_diff_string();
+        //    local_result.clocks_consumed = local_timer.get_clocks_diff();
+        //    tests_results << local_result;
+        //} // The pattern, of complex instruction above, can be multiplied
+
+        //{   //Sample pattern of test with time measure repeated in loop
+        //    bool                      local_ok = true;
+        //    std::vector<uint64_t>     time_diffs;
+        //    std::vector<uint64_t>     clock_diffs;
+        //    test_measurement_result local_result;
+        //    local_result.description = "RUN PART: (short description of part) execution of " + test_description;
+        //    local_result.loops = 10;
+
+        //    for(auto i = 0; i< local_result.loops; ++i)
+        //    {
+        //        C_time_control  loop_timer;
+        //        // TODO: here running of main part of test
+
+        //        // end main part
+        //        loop_timer.tock();
+        //        time_diffs.push_back(loop_timer.get_time_diff());
+        //        clock_diffs.push_back(loop_timer.get_clocks_diff());
+        //    }
+        //    // end of local test
+
+        //    // summary:
+        //    local_result.time_consumed = C_time_control::time_diff_string(std::accumulate(time_diffs.begin(),time_diffs.end(),0.0)/time_diffs.size());
+        //    local_result.time_consumed_min = C_time_control::time_diff_string(*std::min_element(time_diffs.begin(),time_diffs.end()));
+        //    local_result.time_consumed_max = C_time_control::time_diff_string(*std::max_element(time_diffs.begin(),time_diffs.end()));
+
+        //    local_result.clocks_consumed = std::accumulate(clock_diffs.begin(),clock_diffs.end(),0.0)/clock_diffs.size();
+        //    local_result.clocks_consumed_min = *std::min_element(clock_diffs.begin(),clock_diffs.end());
+        //    local_result.clocks_consumed_max = *std::max_element(clock_diffs.begin(),clock_diffs.end());
+
+        //    tests_results << local_result;
+        //} // The pattern, of complex instruction above, can be multiplied
+
+        // // END of run tests
+        // // ---------------------------------------------------------------------------------------------------------
+        run_ok = true;
+    }
+    catch(std::runtime_error &error) {
+        run_result << "error: " + std::string(error.what());
+        run_ok = false;
+    }
+    catch(...) {
+        run_result << "unknown error";
+        run_ok = false;
+    }
+
+    run_timer.tock();
+    run_result.time_consumed = run_timer.get_time_diff();
+    run_result.clocks_consumed = run_timer.get_clocks_diff();
+
+    run_result.passed = run_ok;
+    tests_results << run_result;
+    if (!done()) run_ok=false;
+    std::cout << "<- Test " << (run_ok ? "passed" : "failed") << std::endl;;
+    return run_ok;
+}
+
+bool test_template::done()
+{
+    bool  done_ok = true;
+    test_measurement_result   done_result;
+    done_result.description = "DONE: " + test_description;
+
+    C_time_control            done_timer;
+
+    try {
+        // TODO: here clean up after the test
+        // If the test used definition of workflow:
+        if(workflow_wrapper!=nullptr) workflow_wrapper->cleanup();
+
+        // END of cleaning
+        done_ok = true;
+    }
+    catch(std::runtime_error &error) {
+        done_result << "error: " + std::string(error.what());
+        done_ok = false;
+    }
+    catch(...) {
+        done_result << "unknown error";
+        done_ok = false;
+    }
+
+    done_timer.tock();
+    done_result.time_consumed = done_timer.get_time_diff();
+    done_result.clocks_consumed = done_timer.get_clocks_diff();
+
+    done_result.passed = done_ok;
+    tests_results << done_result;
+
+    return done_ok;
+}
+
+
+
+// Code below creates 'attach_' object in anonymous namespace at global scope.
+// This ensures, that object itself is not visible to other compilation units
+// and it's constructor is ran befor main execution starts.
+// The sole function of this construction is attaching this test to
+// library of tests (singleton command pattern).
+
+namespace {
+    struct attach {
+        test_template test;
+        attach() {
+            test_aggregator::instance().add(&test);
+        }
+    };
+    attach attach_;
+}

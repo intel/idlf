@@ -1,11 +1,12 @@
-intel_visual_cloud_node/MSVC_icc
-intel_visual_cloud_node/MgwMk
-intel_visual_cloud_node/MSVC
-intel_visual_cloud_node/UnixMk
-intel_visual_cloud_node/UnixMk_icc
-visual_cloud_tools/MSVC_icc/
-visual_cloud_tools/MSVC/
-visual_cloud_tools/UnixMk/
+MSVC_icc/
+MSVC/
+UnixMk/
+
+bin/device_*.dll
+bin/demo/
+bin/device/
+bin/tester/
+
 *.sdf
 *.suo
 *.opensdf
@@ -22,5 +23,7 @@ visual_cloud_tools/UnixMk/
 *.jpeg
 *.html
 .clang_complete
+results.csv
 
-
+UnixMk_icc/
+bin/*.csv
