@@ -15,27 +15,27 @@ Installation instructions:
         * already build IDLF device you want to use to run this demo against (device_cpu or device_gpu etc.)
 
     Building steps:
-        1)	Having IDLF libs all build, we are to build demo. eg.:
+        1)  Having IDLF libs all build, we are to build demo. eg.:
             cd <path to IDLF>
-        2)	Generate build system (Visual Studio solution):
+        2)  Generate build system (Visual Studio solution):
             * Linux(for GCC, makefiles): ./create_unixmake_gcc.sh  
             * Windows(for ICC Visual Studio solution): create_msvc_icc.bat       
-        3)	Building of demo: 
+        3)  Building of demo: 
             * Linux: cd UnixMk/Release; make; make install
             * windows: Open sln file in Visual studio and have BUILD_ALL completed. Next execute INSTALL target
-        4)	Here you will need some images for recognition and weights (configuration data of Neural Network)
+        4)  Here you will need some images for recognition and weights (configuration data of Neural Network)
             They are not within repo (its over 200MB of binary data so we do not keep it in our Git repo).
-        5)	Before we have it running, go to bin directory.  Now we need to edit
+        5)  Before we have it running, go to bin directory.  Now we need to edit
             Configuration file to select which device we want to test and which CNN model. There is an example
             "config_readme.txt" in bin directory.
  
-        6)	Now demo app is dynamically loading requested device (at runtime) so we need to point out where our IDLF device is:
+        6)  Now demo app is dynamically loading requested device (at runtime) so we need to point out where our IDLF device is:
             * Linux: export LD_LIBRARY_PATH=<path to VisualCloud>/bin/device/"device"/"compiler"/Release
               where: "device" eg.: cpu or gpu
                      "compiler" eg.: icc or gcc
             * Windows: copy wanted IDLF device to bin directory 
 
-        7)	Running demo takes place from demo_bin: 
+        7)  Running demo takes place from bin: 
             * Linux: ./demo_device --config=<config file eg. config.cfg>
                  or  ./demo_primitives --config=<config file eg. config.cfg>
             * Windows: demo_device --config=<config file eg. config.cfg>
