@@ -10,7 +10,7 @@ Installation instructions:
           Windows: Put FreeImage.dll into folder "IDLF\bin"
         * GCC 4.9+ or ICC compiler  
         * Haswell class CPU and/or GPU on target platform.
-        * weights data (Neural network parameters according to caffenet model)
+        * weights data (Neural network parameters according to caffenet model), download from: https://01.org/sites/default/files/downloads/intel-deep-learning-framework/weightscaffenet.zip
         * some images to be recognized
         * already build IDLF device you want to use to run this demo against (device_cpu or device_gpu etc.)
 
@@ -45,4 +45,5 @@ Installation instructions:
      You can open index.html using any other web browser. If everything is fine you should see scaled down images along with guesses of DLF (our lib) about its content 
      as well as total time it took and time per image to be recognized it took.
 
-
+This software uses the FreeImage open source image library. See http://freeimage.sourceforge.net for details.
+FreeImage is used under the FreeImage Public License - Version 1.0
