@@ -65,9 +65,9 @@ void CL_CALLBACK ocl_toolkit::exec_completed( cl_event e, cl_int status, void *d
     float empirical_efficiency = double(exec_data->num_fmads)/timeDelta;
     auto gpu_freq = ocl_toolkit::s_cagf;
     float theretical_efficiency = gpu_freq * flops / 1000.0f;
-    
+
     printf( "GPU Efficiency for %25s ( assuming GPU clock fixed to %u MHz ):  %.3f %%,  %.3f[ms]  sum: %.2f[ms]\n",
-                exec_data->name.c_str( ), gpu_freq, ( empirical_efficiency / theretical_efficiency ) * 100.0f,  
+                exec_data->name.c_str( ), gpu_freq, ( empirical_efficiency / theretical_efficiency ) * 100.0f,
                 ( timeDelta / 1000000.0f ), ( totalTime / 1000000.0f ) );
 
     delete exec_data->time_event;
@@ -95,7 +95,7 @@ ocl_toolkit::ocl_toolkit( void ) : m_constant_mem_size(0), m_local_mem_size(0), 
             device.getInfo( CL_DEVICE_NAME, &device_param_string_value );
             DBG_PRINTF( "   Device: %s does not contain required cl_intel_subgroups extension!\n", device_param_string_value.c_str() );
             return false;
-        } 
+        }
         return true;
     };
 
@@ -209,7 +209,7 @@ void ocl_toolkit::print_cl_caps(void)
     m_device.getInfo( CL_DEVICE_IMAGE2D_MAX_HEIGHT, &device_param_size_t_value );
     DBG_PRINTF( "       max image2D height: %d\n", device_param_size_t_value );
 
-    
+
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 std::unique_ptr< cl::Kernel > ocl_toolkit::make_kernels_from_file(const std::string & fileName,
@@ -232,7 +232,7 @@ std::unique_ptr< cl::Kernel > ocl_toolkit::make_kernels_from_file(const std::str
     file.seekg(0, std::ios::beg);
     file.read(source, file_size);
     file.close();
-    
+
     source[file_size] = '\0';
     std::string kernel_source(source);
     std::vector<std::string> kernels(1, kernel_source);

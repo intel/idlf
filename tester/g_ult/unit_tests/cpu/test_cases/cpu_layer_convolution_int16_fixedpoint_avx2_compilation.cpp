@@ -26,6 +26,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "tester/g_ult/unit_tests/cpu/naive_implementations.h"
+#include <gtest/gtest.h>
 
 const uint32_t C_simd_width = sizeof(__m256) / sizeof(int32_t);
 
@@ -156,6 +157,7 @@ static void ult_nn_convolution_fixedpoint_comp_both_initialize_matrices(
         }
     }
 
+    _mm_free(weightT);
     _mm_free(inputT);
 }
 

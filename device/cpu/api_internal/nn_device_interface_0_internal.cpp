@@ -1,4 +1,4 @@
-﻿/*
+/*
 Copyright (c) 2014, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
@@ -28,12 +28,19 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "device/api/nn_device_interface_0.h"
 #include "device/common/nn_workload_data.h"
 #include "device/cpu/core/layer_convolution_avx2.h"
+#include "device/cpu/core/layer_convolution_avx2_batch24n.h"
 #include "device/cpu/core/layer_convolution_pooling_avx2.h"
 #include "device/cpu/core/layer_fully_connected_avx2.h"
 #include "device/cpu/core/layer_softmax_avx2.h"
+#include "device/cpu/core/layer_softmax_avx2_batch24n.h"
+#include "device/cpu/core/layer_softmax_loss_avx2.h"
 #include "device/cpu/core/layer_pooling_avx2.h"
+#include "device/cpu/core/layer_pooling_avx2_batch24n.h"
 #include "device/cpu/core/layer_normalization_avx2.h"
+#include "device/cpu/core/layer_normalization_avx2_batch24n.h"
 #include "device/cpu/core/layer_convert_data_layout.h"
+#include "device/cpu/core/layer_convert_data_from_batch_block_layout.h"
+#include "device/cpu/core/layer_convert_data_to_batch_block_layout.h"
 #include "device/cpu/core/layers_fixedpoint.h"
 #include "device/cpu/core/layer_arithmetic_operation.h"
 #include "device/cpu/core/layer_parameter_update.h"
@@ -42,6 +49,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "device/cpu/core/layer_relu_avx2.h"
 #include "device/cpu/core/layer_dropout.h"
 #include "nn_device_interface_0_internal.h"
+#include "device/cpu/core/layer_fully_connected_avx2_batch24n.h"
+#include "data_helper.h"
 
 #include <map>
 #include <cassert>
@@ -52,19 +61,31 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <algorithm>
 #include <numeric>
 #include <immintrin.h>
+#include <iostream>
+#include <cstdlib>
+#include <unordered_set>
+#include <unordered_map>
+#include <iterator>
 
 #define ENABLE_WORKLOAD_MONITORING 0
 
+namespace nn
+{
+bool use_asmjit_primitives = false;
+} //namespace nn
 
+namespace
+{
 #if ENABLE_WORKLOAD_MONITORING
 #include <fstream>
 #include <string>
 #include <sstream>
 #include <iomanip>
 
-void nn_workload_item_data_marshaling(nn_workload_item* item, int stage_num) {
-
+void nn_workload_item_data_marshaling(nn_workload_item* item, int stage_num)
+{
     std::ostringstream temp;
+    float *fp;
     std::string item_name;
 
     switch(item->type){
@@ -102,6 +123,8 @@ void nn_workload_item_data_marshaling(nn_workload_item* item, int stage_num) {
     case NN_WORK_ITEM_TYPE_POOLING_BACKPROP: item_name = "pool_back"; break;
     case NN_WORK_ITEM_TYPE_NORMALIZATION_BACKPROP: item_name = "norm_back"; break;
     case NN_WORK_ITEM_TYPE_SOFTMAX_BACKPROP: item_name = "softmax_back"; break;
+    case NN_WORK_ITEM_TYPE_SOFTMAX_LOSS: item_name = "softmax_loss"; break;
+    case NN_WORK_ITEM_TYPE_SOFTMAX_LOSS_BACKPROP: item_name = "softmax_loss_backprop"; break;
     default: item_name = "no_name";
     }
 
@@ -115,7 +138,7 @@ void nn_workload_item_data_marshaling(nn_workload_item* item, int stage_num) {
 
     file.open(temp.str(), std::ios::out | std::ios::trunc);
     if(file.is_open()) {
-        const auto output = static_cast<nn::workload_data<float>*>(item->output[0]);
+        const auto output = nn::workload_data_cast<>(item->output[0]);
         if(output) {
             uint32_t
                 x, y, z,
@@ -150,7 +173,6 @@ void nn_workload_item_data_marshaling(nn_workload_item* item, int stage_num) {
 
 
 // Function for copying arguments between workflow and workload items [batch, &flow_to_work]
-namespace {
 
 template<NN_WORK_ITEM_TYPE T_work_item_type>
 struct flow_item_helper;
@@ -241,6 +263,47 @@ template <> struct flow_item_helper<NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x
     }
 };
 
+template <> struct flow_item_helper<NN_WORK_ITEM_TYPE_POOLING> {
+    static const nn_arguments_forward_pooling &get_arguments(const nn_workflow_item *flow_item) {
+        return flow_item->arguments.forward_pooling;
+    }
+
+    static void calculate_padding(const nn_workflow_item *flow_item, size_t input_w, size_t input_h, size_t &left_padding, size_t &right_padding, size_t &top_padding, size_t &bottom_padding){
+        auto& arguments = get_arguments(flow_item);
+
+        size_t padding_w = ((flow_item->output_format[0].format_3d.size[0] - 1) * arguments.stride[0] + arguments.size[0]) - input_w;
+        size_t padding_h = ((flow_item->output_format[0].format_3d.size[1] - 1) * arguments.stride[1] + arguments.size[1]) - input_h;
+
+        assert(padding_w >= arguments.center_offset[0]);
+        assert(padding_h >= arguments.center_offset[1]);
+
+        left_padding = arguments.center_offset[0];
+        right_padding = padding_w - arguments.center_offset[0];
+
+        top_padding = arguments.center_offset[1];
+        bottom_padding = padding_h - arguments.center_offset[1];
+    }
+};
+
+template <> struct flow_item_helper<NN_WORK_ITEM_TYPE_NORMALIZATION> {
+    static const nn_arguments_forward_normalization &get_arguments(const nn_workflow_item *flow_item) {
+        return flow_item->arguments.forward_normalization;
+    }
+
+    static void calculate_padding(const nn_workflow_item *flow_item, size_t input_w, size_t input_h, size_t &left_padding, size_t &right_padding, size_t &top_padding, size_t &bottom_padding){
+        auto& arguments = get_arguments(flow_item);
+
+        size_t padding_w = flow_item->output_format[0].format_3d.size[0] - input_w;
+        size_t padding_h = flow_item->output_format[0].format_3d.size[1] - input_h;
+
+        left_padding = 0;
+        right_padding = padding_w;
+
+        top_padding = 0;
+        bottom_padding = padding_h;
+    }
+};
+
 template <NN_WORK_ITEM_TYPE T_use_item_type>
 static void nn_workflow_compile_0_function_update_output_padding_for_use(const nn_workflow_item *use_flow_item,
                                                                          size_t output_w,
@@ -281,6 +344,8 @@ static void nn_workflow_compile_0_function_calculate_output_padding(const nn_wor
         }
         else
         {
+            nn_workflow_compile_0_function_update_output_padding_for_use<NN_WORK_ITEM_TYPE_POOLING>(use_item, output_w, output_h, left_padding, right_padding, top_padding, bottom_padding);
+            nn_workflow_compile_0_function_update_output_padding_for_use<NN_WORK_ITEM_TYPE_NORMALIZATION>(use_item, output_w, output_h, left_padding, right_padding, top_padding, bottom_padding);
             nn_workflow_compile_0_function_update_output_padding_for_use<NN_WORK_ITEM_TYPE_CONVOLUTION>(use_item, output_w, output_h, left_padding, right_padding, top_padding, bottom_padding);
             nn_workflow_compile_0_function_update_output_padding_for_use<NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2>(use_item, output_w, output_h, left_padding, right_padding, top_padding, bottom_padding);
             nn_workflow_compile_0_function_update_output_padding_for_use<NN_WORK_ITEM_TYPE_CONVOLUTION_INT16_FIXEDPOINT>(use_item, output_w, output_h, left_padding, right_padding, top_padding, bottom_padding);
@@ -296,35 +361,59 @@ void nn_workflow_compile_0_function_create_primitive(nn_workload_item_t *load_it
                                                      size_t output_left_padding,
                                                      size_t output_right_padding,
                                                      size_t output_top_padding,
-                                                     size_t output_bottom_padding) {
-    switch (load_item->type) {
-    case NN_WORK_ITEM_TYPE_CONVOLUTION: {
+                                                     size_t output_bottom_padding)
+{
+    switch (load_item->type)
+    {
+    case NN_WORK_ITEM_TYPE_CONVOLUTION:
+    {
         auto &args = flow_item->arguments.forward_convolution;
         assert((flow_item->output_format[0].format >= NN_DATA_FORMAT_3D ? flow_item->output_format[0].format_3d.size[2]
                                                                      : 1) == args.weights->size[3]);
         assert(args.padding == NN_PADDING_MODE_DATA_OR_ZERO);
 
-        load_item->primitive = new layer::convolution_f32(
-            args.weights->size[0],
-            args.weights->size[1],
-            args.weights->size[2],
-            args.weights->size[3],
-            flow_item->output_format[0].format_1d.size[0],
-            flow_item->output_format[0].format >= NN_DATA_FORMAT_2D ? flow_item->output_format[0].format_2d.size[1] : 1,
-            args.center_offset[0],
-            args.center_offset[1],
-            args.stride[0],
-            args.stride[1],
-            args.activation,
-            batch,
-            output_left_padding,
-            output_right_padding,
-            output_top_padding,
-            output_bottom_padding,
-            device);
+        using namespace convolution;
+        if (nn::use_asmjit_primitives && (batch % 24 == 0) && (args.weights->size[0] < 7))
+        {
+            load_item->primitive = new layer::convolution_f32_batch24n(
+                make<Batch>(batch),
+                OutputDimensions{make<OutputHeight>(flow_item->output_format[0].format >= NN_DATA_FORMAT_2D ? flow_item->output_format[0].format_2d.size[1] : 1),
+                                 make<OutputWidth>(flow_item->output_format[0].format_1d.size[0]),
+                                 make<OutputFeats>(args.weights->size[3])},
+                KernelInfo{KernelDimensions{make<KernelHeight>(args.weights->size[1]),
+                                            make<KernelWidth>(args.weights->size[0]),
+                                            make<KernelFeats>(args.weights->size[2])},
+                           make<OutputFeats>(args.weights->size[3]),
+                           KernelCenter{make<Rows>(args.center_offset[1]), make<Cols>(args.center_offset[0])},
+                           Stride{make<Rows>(args.stride[1]), make<Cols>(args.stride[0])}},
+                args.activation,
+                device);
+        }
+        else
+        {
+            load_item->primitive = new layer::convolution_f32(
+                args.weights->size[0],
+                args.weights->size[1],
+                args.weights->size[2],
+                args.weights->size[3],
+                flow_item->output_format[0].format_1d.size[0],
+                flow_item->output_format[0].format >= NN_DATA_FORMAT_2D ? flow_item->output_format[0].format_2d.size[1] : 1,
+                args.center_offset[0],
+                args.center_offset[1],
+                args.stride[0],
+                args.stride[1],
+                args.activation,
+                batch,
+                output_left_padding,
+                output_right_padding,
+                output_top_padding,
+                output_bottom_padding,
+                device);
+        }
         break;
     }
-    case NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2: {
+    case NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2:
+    {
         auto &args = flow_item->arguments.forward_convolution_pooling_max_2x2_stride_2x2;
         assert((flow_item->output_format[0].format >= NN_DATA_FORMAT_3D ? flow_item->output_format[0].format_3d.size[2]
                                                                      : 1) == args.weights->size[3]);
@@ -350,7 +439,8 @@ void nn_workflow_compile_0_function_create_primitive(nn_workload_item_t *load_it
             device);
         break;
     }
-    case NN_WORK_ITEM_TYPE_FULLY_CONNECTED: {
+    case NN_WORK_ITEM_TYPE_FULLY_CONNECTED:
+    {
         auto &args = flow_item->arguments.forward_fully_connected;
         auto& input = flow_item->input[0];
 
@@ -359,7 +449,17 @@ void nn_workflow_compile_0_function_create_primitive(nn_workload_item_t *load_it
 
         bool use_3d_input = input.item->output_format[input.index].format == NN_DATA_FORMAT_3D;
 
-        if(use_3d_input)
+        if (nn::use_asmjit_primitives and (batch % 24 == 0))
+            load_item->primitive = new layer::fully_connected_f32_batch24n(
+                (use_3d_input ? (std::max(args.weights->size[0], size_t(1))
+                                * std::max(args.weights->size[1], size_t(1))
+                                * std::max(args.weights->size[2], size_t(1)))
+                    : args.weights->size[0]),
+                (use_3d_input ? args.weights->size[3] : args.weights->size[1]),
+                args.activation,
+                batch,
+                device);
+        else if(use_3d_input)
             load_item->primitive = new layer::fully_connected_f32(
                 args.weights->size[0], args.weights->size[1], args.weights->size[2],
                 args.weights->size[3],
@@ -376,7 +476,8 @@ void nn_workflow_compile_0_function_create_primitive(nn_workload_item_t *load_it
 
         break;
     }
-    case NN_WORK_ITEM_TYPE_POOLING: {
+    case NN_WORK_ITEM_TYPE_POOLING:
+    {
         auto &args = flow_item->arguments.forward_pooling;
         auto& input = flow_item->input[0];
 
@@ -385,23 +486,41 @@ void nn_workflow_compile_0_function_create_primitive(nn_workload_item_t *load_it
         assert(get_format_size<2>(input.item->output_format[input.index]) ==
                get_format_size<2>(flow_item->output_format[0])); // input and output have same depth
 
-        load_item->primitive = new layer::pooling_f32(args.mode,
-                                                      args.size[0],
-                                                      args.size[1],
-                                                      args.stride[0],
-                                                      args.stride[1],
-                                                      get_format_size<2>(flow_item->output_format[0]),
-                                                      get_format_size<0>(flow_item->output_format[0]),
-                                                      get_format_size<1>(flow_item->output_format[0]),
-                                                      batch,
-                                                      output_left_padding,
-                                                      output_right_padding,
-                                                      output_top_padding,
-                                                      output_bottom_padding,
-                                                      device);
+        auto load_input = load_item->input[0];
+        auto prev_output = load_input.item->output[load_input.index];
+        if (nn::use_asmjit_primitives
+            && (args.mode == NN_POOLING_MODE_MAX)
+            && (prev_output->parent->layout == nn::data_helper<NN_WORKLOAD_DATA_TAG_NBLOCKZXYN, nn::layout_nblockzxyn_f32>::layout))
+            load_item->primitive = new layer::max_pooling_f32_batch24n(
+                PoolingInfo{PoolingDimensions(make<PoolingHeight>(args.size[1]),
+                                              make<PoolingWidth>(args.size[0])),
+                            Stride{make<Rows>(args.stride[1]), make<Cols>(args.stride[0])}},
+                OutputDimensions(make<OutputHeight>(get_format_size<1>(flow_item->output_format[0])),
+                                 make<OutputWidth>(get_format_size<0>(flow_item->output_format[0])),
+                                 make<OutputFeats>(get_format_size<2>(flow_item->output_format[0]))),
+                batch,
+                device);
+        else
+            load_item->primitive = new layer::pooling_f32(args.mode,
+                                                          args.size[0],
+                                                          args.size[1],
+                                                          args.stride[0],
+                                                          args.stride[1],
+                                                          get_format_size<2>(flow_item->output_format[0]),
+                                                          get_format_size<0>(flow_item->output_format[0]),
+                                                          get_format_size<1>(flow_item->output_format[0]),
+                                                          args.center_offset[0],
+                                                          args.center_offset[1],
+                                                          batch,
+                                                          output_left_padding,
+                                                          output_right_padding,
+                                                          output_top_padding,
+                                                          output_bottom_padding,
+                                                          device);
         break;
     }
-    case NN_WORK_ITEM_TYPE_ARITHMETIC: {
+    case NN_WORK_ITEM_TYPE_ARITHMETIC:
+    {
         auto &args = flow_item->arguments.forward_arithmetic;
         assert(output_left_padding == 0 && output_right_padding == 0 && output_top_padding == 0 &&
                output_bottom_padding == 0);
@@ -413,7 +532,14 @@ void nn_workflow_compile_0_function_create_primitive(nn_workload_item_t *load_it
                                                          device);
         break;
     }
-    case NN_WORK_ITEM_TYPE_RELU_1D: // TODO: different primitive implementation for 1D.
+    case NN_WORK_ITEM_TYPE_RELU_1D:
+    {
+        load_item->primitive = new layer::relu_1d_f32(
+            get_format_size<0>(flow_item->output_format[0]),
+            batch,
+            device);
+        break;
+    }
     case NN_WORK_ITEM_TYPE_RELU_3D:
     {
         load_item->primitive = new layer::relu_f32(get_format_size<0>(flow_item->output_format[0]),
@@ -427,10 +553,12 @@ void nn_workflow_compile_0_function_create_primitive(nn_workload_item_t *load_it
                                                    device);
         break;
     }
-    case NN_WORK_ITEM_TYPE_NORMALIZATION: {
+    case NN_WORK_ITEM_TYPE_NORMALIZATION:
+    {
         auto &args = flow_item->arguments.forward_normalization;
         switch (args.normalization.mode) {
-        case NN_NORMALIZATION_MODE_LINEAR_SINGLE: {
+        case NN_NORMALIZATION_MODE_LINEAR_SINGLE:
+        {
             assert(output_left_padding == 0 && output_right_padding == 0 && output_top_padding == 0 &&
                    output_bottom_padding == 0);
 
@@ -444,21 +572,37 @@ void nn_workflow_compile_0_function_create_primitive(nn_workload_item_t *load_it
                                                                 device);
             break;
         }
-        case NN_NORMALIZATION_MODE_RESPONSE_ACROSS_MAPS: {
-            load_item->primitive =
-                new layer::normalization_response_across_maps_f32(args.normalization.alpha,
-                                                                  args.normalization.beta,
-                                                                  args.normalization.k,
-                                                                  args.normalization.n,
-                                                                  get_format_size<0>(flow_item->output_format[0]),
-                                                                  get_format_size<1>(flow_item->output_format[0]),
-                                                                  get_format_size<2>(flow_item->output_format[0]),
-                                                                  batch,
-                                                                  output_left_padding,
-                                                                  output_right_padding,
-                                                                  output_top_padding,
-                                                                  output_bottom_padding,
-                                                                  device);
+        case NN_NORMALIZATION_MODE_RESPONSE_ACROSS_MAPS:
+        {
+            auto load_input = load_item->input[0];
+            auto prev_output = load_input.item->output[load_input.index];
+            if (nn::use_asmjit_primitives and (batch % 24 == 0))
+                load_item->primitive =
+                    new layer::normalization_response_across_maps_f32_batch24n(
+                        args.normalization.alpha,
+                        args.normalization.beta,
+                        args.normalization.k,
+                        args.normalization.n,
+                        OutputDimensions{make<OutputHeight>(get_format_size<1>(flow_item->output_format[0])),
+                                         make<OutputWidth>(get_format_size<0>(flow_item->output_format[0])),
+                                         make<OutputFeats>(get_format_size<2>(flow_item->output_format[0]))},
+                        batch,
+                        device);
+            else
+                load_item->primitive =
+                    new layer::normalization_response_across_maps_f32(args.normalization.alpha,
+                                                                      args.normalization.beta,
+                                                                      args.normalization.k,
+                                                                      args.normalization.n,
+                                                                      get_format_size<0>(flow_item->output_format[0]),
+                                                                      get_format_size<1>(flow_item->output_format[0]),
+                                                                      get_format_size<2>(flow_item->output_format[0]),
+                                                                      batch,
+                                                                      output_left_padding,
+                                                                      output_right_padding,
+                                                                      output_top_padding,
+                                                                      output_bottom_padding,
+                                                                      device);
             break;
         }
         default:
@@ -469,7 +613,15 @@ void nn_workflow_compile_0_function_create_primitive(nn_workload_item_t *load_it
         break;
     }
     case NN_WORK_ITEM_TYPE_SOFTMAX: {
-        load_item->primitive = new layer::softmax_f32(get_format_size<0>(flow_item->output_format[0]), batch, device);
+        if (nn::use_asmjit_primitives and (batch % 24 == 0))
+            load_item->primitive = new layer::softmax_f32_batch24n(get_format_size<0>(flow_item->output_format[0]), batch, device);
+        else
+            load_item->primitive = new layer::softmax_f32(get_format_size<0>(flow_item->output_format[0]), batch, device);
+        break;
+    }
+    case NN_WORK_ITEM_TYPE_SOFTMAX_LOSS:
+    {
+        load_item->primitive = new layer::softmax_loss_f32(get_format_size<0>(flow_item->output_format[0]), batch, device);
         break;
     }
     case NN_WORK_ITEM_TYPE_LOSS_FUNCTION: {
@@ -505,6 +657,7 @@ void nn_workflow_compile_0_function_create_primitive(nn_workload_item_t *load_it
         auto &args = flow_item->arguments.forward_pooling_fixedpoint;
 
         load_item->primitive = new int16_fixedpoint::pooling_i16(
+            args.mode,
             flow_item->output_format[0].format_3d.size[2],
             flow_item->output_format[0].format_1d.size[0],
             flow_item->output_format[0].format >= NN_DATA_FORMAT_2D ? flow_item->output_format[0].format_2d.size[1] : 1,
@@ -512,6 +665,8 @@ void nn_workflow_compile_0_function_create_primitive(nn_workload_item_t *load_it
             args.pool_size[1],
             args.pool_stride[0],
             args.pool_stride[1],
+            args.center_offset[0],
+            args.center_offset[1],
             batch,
             output_left_padding,
             output_right_padding,
@@ -649,499 +804,744 @@ void nn_workflow_compile_0_function_create_primitive(nn_workload_item_t *load_it
     }
 }
 
+nn_workload_data_layout_t get_workload_layout(NN_WORKLOAD_DATA_TYPE type)
+{
+    // layout for inputs & outputs
+    switch (type)
+    {
+    case NN_WORKLOAD_DATA_TYPE_F32_1D:
+    case NN_WORKLOAD_DATA_TYPE_F32_1D_BATCH:
+    case NN_WORKLOAD_DATA_TYPE_F32_2D:
+    case NN_WORKLOAD_DATA_TYPE_F32_2D_BATCH:
+    case NN_WORKLOAD_DATA_TYPE_F32_3D:
+    case NN_WORKLOAD_DATA_TYPE_F32_3D_BATCH:
+        return nn::layout_t<nn::layout_xyzpqn_f32>::layout;
+
+    case NN_WORKLOAD_DATA_TYPE_F32_ZXY_BATCH:
+    case NN_WORKLOAD_DATA_TYPE_F32_ZXY:
+        return nn::layout_t<nn::layout_zxynpq_f32>::layout;
+
+    case NN_WORKLOAD_DATA_TYPE_I16_1D:
+    case NN_WORKLOAD_DATA_TYPE_I16_1D_BATCH:
+    case NN_WORKLOAD_DATA_TYPE_I16_3D:
+    case NN_WORKLOAD_DATA_TYPE_I16_3D_BATCH:
+        return nn::layout_t<nn::layout_xyzpqn_i16>::layout;
+
+    case NN_WORKLOAD_DATA_TYPE_I16_ZXY:
+    case NN_WORKLOAD_DATA_TYPE_I16_ZXY_BATCH:
+        return nn::layout_t<nn::layout_zxynpq_i16>::layout;
+
+    case NN_WORKLOAD_DATA_TYPE_I32_1D:
+    case NN_WORKLOAD_DATA_TYPE_I32_1D_BATCH:
+        return nn::layout_t<nn::layout_xyzpqn_i32>::layout;
+
+    default:
+        throw std::out_of_range("unsupported data type");
+    }
+};
+
+nn_workload_data_coords_t calculate_size(uint32_t batch, NN_WORKLOAD_DATA_TYPE type, nn_output_format *data)
+{
+    // calculates 6D size from nn::data, returns it as nn_workload_data_coords_t
+    uint32_t size_n = batch, size_x = 1, size_y = 1, size_z = 1, size_p = 1, size_q = 1;
+    switch (type)
+    {
+    case NN_WORKLOAD_DATA_TYPE_F32_ZXY_BATCH:
+    case NN_WORKLOAD_DATA_TYPE_F32_ZXY:
+    case NN_WORKLOAD_DATA_TYPE_I16_ZXY_BATCH:
+    case NN_WORKLOAD_DATA_TYPE_I16_ZXY:
+    case NN_WORKLOAD_DATA_TYPE_F32_3D_BATCH:
+    case NN_WORKLOAD_DATA_TYPE_F32_3D:
+    case NN_WORKLOAD_DATA_TYPE_I16_3D_BATCH:
+    case NN_WORKLOAD_DATA_TYPE_I16_3D:
+        size_z = data->format_3d.size[2];
+        // fall through
+    case NN_WORKLOAD_DATA_TYPE_F32_2D_BATCH:
+    case NN_WORKLOAD_DATA_TYPE_F32_2D:
+        size_y = data->format_2d.size[1];
+        // fall through
+    case NN_WORKLOAD_DATA_TYPE_F32_1D_BATCH:
+    case NN_WORKLOAD_DATA_TYPE_F32_1D:
+    case NN_WORKLOAD_DATA_TYPE_I16_1D_BATCH:
+    case NN_WORKLOAD_DATA_TYPE_I16_1D:
+    case NN_WORKLOAD_DATA_TYPE_I32_1D_BATCH:
+    case NN_WORKLOAD_DATA_TYPE_I32_1D:
+        size_x = data->format_1d.size[0];
+        break;
+    default:
+        assert(0);
+    }
+
+    switch (type)
+    {
+    case NN_WORKLOAD_DATA_TYPE_F32_ZXY:
+    case NN_WORKLOAD_DATA_TYPE_I16_ZXY:
+    case NN_WORKLOAD_DATA_TYPE_F32_3D:
+    case NN_WORKLOAD_DATA_TYPE_I16_3D:
+    case NN_WORKLOAD_DATA_TYPE_F32_2D:
+    case NN_WORKLOAD_DATA_TYPE_F32_1D:
+    case NN_WORKLOAD_DATA_TYPE_I16_1D:
+    case NN_WORKLOAD_DATA_TYPE_I32_1D:
+        size_n = 1;
+        break;
+    }
+
+    return nn_workload_data_coords_t( size_n, size_x, size_y, size_z, size_p, size_q );
+}
+
+template <typename T_FindLoadItem>
 void nn_workflow_compile_0_function_copy_item(
              nn_workload_item_t *load_item,
              nn_workflow_item_t *flow_item,
              nn_workflow_t      *workflow,
              nn_workload_t      *workload,
              uint32_t batch,
-             std::map<nn_workflow_item_t *, nn_workload_item_t *> &flow_to_work,
+             T_FindLoadItem find_load_item,
              nn_device_internal *device
-             ){
+             ) {
 
-            // copy name
-            load_item->name = flow_item->name;
+    // copy name
+    load_item->name = flow_item->name;
 
-            // copy type & create nn_workload_data_t
-            load_item->type = flow_item->type;
-            
-            if(flow_item->type == NN_WORK_ITEM_TYPE_RELU_BACKPROP)
-            {
-                if(flow_item->forward_item->output_format[0].format == NN_DATA_FORMAT_1D)
-                    load_item->type = NN_WORK_ITEM_TYPE_RELU_1D_BACKPROP;
-                else if(flow_item->forward_item->output_format[0].format == NN_DATA_FORMAT_3D)
-                    load_item->type = NN_WORK_ITEM_TYPE_RELU_3D_BACKPROP;
-                else
-                    assert(0);
-            }
-            else if(flow_item->type == NN_WORK_ITEM_TYPE_RELU)
-            {
-                if(flow_item->output_format[0].format == NN_DATA_FORMAT_1D)
-                    load_item->type = NN_WORK_ITEM_TYPE_RELU_1D;
-                else if(flow_item->output_format[0].format == NN_DATA_FORMAT_3D)
-                    load_item->type = NN_WORK_ITEM_TYPE_RELU_3D;
-                else
-                    assert(0);
-            }
+    // copy type & create nn_workload_data_t
+    load_item->type = flow_item->type;
 
-            // calculate needed output buffer paddings (only forward passes)
-            size_t padding_left = 0, padding_right = 0, padding_top = 0, padding_bottom = 0;
-            if (flow_item->forward_item == nullptr)
-                nn_workflow_compile_0_function_calculate_output_padding(flow_item, padding_left, padding_right, padding_top, padding_bottom);
+    if(flow_item->type == NN_WORK_ITEM_TYPE_RELU_BACKPROP)
+    {
+        if(flow_item->forward_item->output_format[0].format == NN_DATA_FORMAT_1D)
+            load_item->type = NN_WORK_ITEM_TYPE_RELU_1D_BACKPROP;
+        else if(flow_item->forward_item->output_format[0].format == NN_DATA_FORMAT_3D)
+            load_item->type = NN_WORK_ITEM_TYPE_RELU_3D_BACKPROP;
+        else
+            assert(0);
+    }
+    else if(flow_item->type == NN_WORK_ITEM_TYPE_RELU)
+    {
+        if(flow_item->output_format[0].format == NN_DATA_FORMAT_1D)
+            load_item->type = NN_WORK_ITEM_TYPE_RELU_1D;
+        else if(flow_item->output_format[0].format == NN_DATA_FORMAT_3D)
+            load_item->type = NN_WORK_ITEM_TYPE_RELU_3D;
+        else
+            assert(0);
+    }
 
-            // setup primitive handle (only forward passes)
-            if (flow_item->forward_item == nullptr)
-            {
-                load_item->primitive = nullptr;
-                nn_workflow_compile_0_function_create_primitive(
-                    load_item, flow_item, batch, device, padding_left, padding_right, padding_top, padding_bottom);
-                load_item->forward_item = nullptr;
-            }
-            else
-                load_item->forward_item = flow_to_work[flow_item->forward_item];
+    // calculate needed output buffer paddings (only forward passes)
+    size_t padding_left = 0, padding_right = 0, padding_top = 0, padding_bottom = 0;
+    if (flow_item->forward_item == nullptr)
+        nn_workflow_compile_0_function_calculate_output_padding(flow_item, padding_left, padding_right, padding_top, padding_bottom);
 
-            // creating outputs
-            for (uint32_t out = 0; out < flow_item->output_count; ++out)
-            {
-                load_item->output.push_back(nullptr);
-            }
+    // creating outputs
+    for (uint32_t out = 0; out < flow_item->output_count; ++out)
+    {
+        load_item->output.push_back(nullptr);
+    }
 
-            // copying inputs
-            load_item->input.resize(flow_item->input_count);
-            for (auto index = 0u; index<flow_item->input_count; ++index)
-            {
-                assert(flow_to_work.find(flow_item->input[index].item) != flow_to_work.end());
-                load_item->input[index].item = flow_to_work[flow_item->input[index].item];
-                load_item->input[index].index = flow_item->input[index].index;
-            }
+    // copying inputs
+    load_item->input.resize(flow_item->input_count);
+    for (auto index = 0u; index < flow_item->input_count; ++index)
+    {
+        auto input_load_item = find_load_item(flow_item->input[index].item);
+        assert(input_load_item);
+        load_item->input[index].item = input_load_item;
+        load_item->input[index].index = flow_item->input[index].index;
+    }
 
-            // copying uses
-            load_item->use.resize(flow_item->use_count);
-            for (auto index = 0u; index<flow_item->use_count; ++index)
-            {
-                assert(flow_to_work.find(flow_item->use[index].item) != flow_to_work.end());
-                load_item->use[index].item = flow_to_work[flow_item->use[index].item];
-                load_item->use[index].index = flow_item->use[index].index;
-            }
+    load_item->primitive = nullptr;
 
-            // layout for inputs & outputs
-            auto get_workload_layout = [](NN_WORKLOAD_DATA_TYPE type) -> nn_workload_data_layout_t
-            {
-                switch (type)
-                {
-                case NN_WORKLOAD_DATA_TYPE_F32_1D:
-                case NN_WORKLOAD_DATA_TYPE_F32_1D_BATCH:
-                case NN_WORKLOAD_DATA_TYPE_F32_2D:
-                case NN_WORKLOAD_DATA_TYPE_F32_2D_BATCH:
-                case NN_WORKLOAD_DATA_TYPE_F32_3D:
-                case NN_WORKLOAD_DATA_TYPE_F32_3D_BATCH:
-                    return nn::workload_data<float>::layout.xyzpqn;
+    // setup primitive handle (only forward passes)
+    if (flow_item->forward_item == nullptr)
+    {
+        nn_workflow_compile_0_function_create_primitive(
+            load_item,
+            flow_item,
+            batch,
+            device,
+            padding_left,
+            padding_right,
+            padding_top,
+            padding_bottom);
+        load_item->forward_item = nullptr;
+    }
+    else
+    {
 
-                case NN_WORKLOAD_DATA_TYPE_F32_ZXY_BATCH:
-                case NN_WORKLOAD_DATA_TYPE_F32_ZXY:
-                    return nn::workload_data<float>::layout.zxynpq;
+        load_item->forward_item = find_load_item(flow_item->forward_item);
+        if(load_item->forward_item==nullptr) throw std::runtime_error("Couldn't find forward item");
 
-                case NN_WORKLOAD_DATA_TYPE_I16_1D:
-                case NN_WORKLOAD_DATA_TYPE_I16_1D_BATCH:
-                case NN_WORKLOAD_DATA_TYPE_I16_3D:
-                case NN_WORKLOAD_DATA_TYPE_I16_3D_BATCH:
-                    return nn::workload_data<int16_t>::layout.xyzpqn;
+    }
 
-                case NN_WORKLOAD_DATA_TYPE_I16_ZXY:
-                case NN_WORKLOAD_DATA_TYPE_I16_ZXY_BATCH:
-                    return nn::workload_data<int16_t>::layout.zxynpq;
+    // setup output buffer
+    switch(load_item->type) {
+    case NN_WORK_ITEM_TYPE_INPUT: {
+        auto input_index = flow_item->arguments.input.index;
+        auto input_item_format = workload->input_format[input_index];
+        auto input_item_size = calculate_size(workload->batch, input_item_format, flow_item->output_format);
+        auto input_item_layout = get_workload_layout(input_item_format);
 
-                case NN_WORKLOAD_DATA_TYPE_I32_1D:
-                case NN_WORKLOAD_DATA_TYPE_I32_1D_BATCH:
-                    return nn::workload_data<int32_t>::layout.xyzpqn;
+        load_item->output[0] =
+            new nn::workload_data<>(
+                NN_WORKLOAD_DATA_TAG_UNKNOWN,
+                input_item_size,
+                input_item_layout,
+                padding_left,
+                padding_right,
+                padding_top,
+                padding_bottom,
+                true);
+        break;
+    }
+    case NN_WORK_ITEM_TYPE_OUTPUT: {
+        auto output_index = flow_item->arguments.output.index;
+        auto output_item_format = workload->output_format[output_index];
+        auto output_item_size = calculate_size(workload->batch, output_item_format, flow_item->output_format);
+        auto output_item_layout = get_workload_layout(output_item_format);
 
-                default:
-                    throw std::out_of_range("unsupported data type");
-                }
-            };
+        load_item->output[0] =
+            new nn::workload_data<>(
+                NN_WORKLOAD_DATA_TAG_UNKNOWN, output_item_size, output_item_layout, true);
+        break;
+    }
+    case NN_WORK_ITEM_TYPE_VIEW:
+    {
+        auto& origin = flow_item->arguments.view.origin;
+        assert(flow_item->input_count == 1);
+        auto& input = load_item->input[0];
+        auto input_data = reinterpret_cast<nn::workload_data<> *>(input.item->output[input.index]);
+        auto div = (input_data->parent->tag == NN_WORKLOAD_DATA_TAG_ZBLOCKXYZN) ? input_data->parent->lengths.t[NN_DATA_COORD_p] : 1;
+        nn_workload_data_coords_t start(
+            0,
+            origin[0],
+            origin[1],
+            origin[2] / div,
+            0,
+            0);
+        auto x_size = flow_item->output_format[0].format_1d.size[0];
+        auto y_size = (flow_item->output_format[0].format >= NN_DATA_FORMAT_2D ? flow_item->output_format[0].format_2d.size[1] : 1);
+        auto z_size = (flow_item->output_format[0].format >= NN_DATA_FORMAT_3D ? flow_item->output_format[0].format_3d.size[2] : 1);
+        nn_workload_data_coords_t end(
+            input_data->get_length(NN_DATA_COORD_n) - 1,
+            origin[0] + x_size - 1,
+            origin[1] + y_size - 1,
+            (origin[2] + z_size - 1) / div,
+            input_data->get_length(NN_DATA_COORD_p) - 1,
+            input_data->get_length(NN_DATA_COORD_q) - 1
+        );
 
-            // calculates 6D size from nn::data, returns it as nn_workload_data_coords_t
-            auto calculate_size = [](uint32_t batch, NN_WORKLOAD_DATA_TYPE type, nn_output_format *data) -> nn_workload_data_coords_t
-            {
-                uint32_t size_n = batch, size_x = 1, size_y = 1, size_z = 1, size_p = 1, size_q = 1;
-                switch (type)
-                {
-                case NN_WORKLOAD_DATA_TYPE_F32_ZXY_BATCH:
-                case NN_WORKLOAD_DATA_TYPE_F32_ZXY:
-                case NN_WORKLOAD_DATA_TYPE_I16_ZXY_BATCH:
-                case NN_WORKLOAD_DATA_TYPE_I16_ZXY:
-                case NN_WORKLOAD_DATA_TYPE_F32_3D_BATCH:
-                case NN_WORKLOAD_DATA_TYPE_F32_3D:
-                case NN_WORKLOAD_DATA_TYPE_I16_3D_BATCH:
-                case NN_WORKLOAD_DATA_TYPE_I16_3D:
-                    size_z = data->format_3d.size[2];
-                    // fall through
-                case NN_WORKLOAD_DATA_TYPE_F32_2D_BATCH:
-                case NN_WORKLOAD_DATA_TYPE_F32_2D:
-                    size_y = data->format_2d.size[1];
-                    // fall through
-                case NN_WORKLOAD_DATA_TYPE_F32_1D_BATCH:
-                case NN_WORKLOAD_DATA_TYPE_F32_1D:
-                case NN_WORKLOAD_DATA_TYPE_I16_1D_BATCH:
-                case NN_WORKLOAD_DATA_TYPE_I16_1D:
-                case NN_WORKLOAD_DATA_TYPE_I32_1D_BATCH:
-                case NN_WORKLOAD_DATA_TYPE_I32_1D:
-                    size_x = data->format_1d.size[0];
-                    break;
-                default:
-                    assert(0);
-                }
-                return nn_workload_data_coords_t( size_n, size_x, size_y, size_z, size_p, size_q );
-            };
+        load_item->output[0] = new nn::workload_data<>(*input_data, start, end);
+        break;
+    }
+    case NN_WORK_ITEM_TYPE_MERGE:
+    {
+        uint16_t axis = flow_item->arguments.forward_merge.axis; // x = 0, y = 1, z = 2
+        auto& input = load_item->input[0];
+        auto input_data = input.item->output[input.index];// flow_to_work[input.item]->output[input.index];
+        nn_workload_data_layout_t previous_layout = input_data->parent->layout;
 
-            // setup output buffer
-            switch(load_item->type) {
-            case NN_WORK_ITEM_TYPE_INPUT: {
-                auto input_index = flow_item->arguments.input.index;
-                auto input_item_format = workload->input_format[input_index];
-                auto input_item_size = calculate_size(workload->batch, input_item_format, flow_item->output_format);
-                auto input_item_layout = get_workload_layout(input_item_format);
-
-                load_item->output[0] =
-                    new nn::workload_data<float /* NOTE: this type is disregarded in this case */>(
-                        NN_WORKLOAD_DATA_TAG_UNKNOWN,
-                        input_item_size,
-                        input_item_layout,
-                        padding_left,
-                        padding_right,
-                        padding_top,
-                        padding_bottom,
-                        true);
-                break;
-            }
-            case NN_WORK_ITEM_TYPE_OUTPUT: {
-                auto output_index = flow_item->arguments.output.index;
-                auto output_item_format = workload->output_format[output_index];
-                auto output_item_size = calculate_size(workload->batch, output_item_format, flow_item->output_format);
-                auto output_item_layout = get_workload_layout(output_item_format);
-
-                load_item->output[0] =
-                    new nn::workload_data<float /* NOTE: this type is disregarded in this case */>(
-                        NN_WORKLOAD_DATA_TAG_UNKNOWN, output_item_size, output_item_layout, true);
-                break;
-            }
-            case NN_WORK_ITEM_TYPE_VIEW: {
-                auto& origin = flow_item->arguments.view.origin;
-                auto& input = flow_item->input[0];
-                nn::workload_data<float> *input_data = reinterpret_cast<nn::workload_data<float> *>(flow_to_work[input.item]->output[input.index]);
-                nn_workload_data_coords_t start(0, origin[0], origin[1], origin[2] / input_data->parent->lengths.t[NN_DATA_COORD_p], 0, 0);
-                nn_workload_data_coords_t end(
-                    batch - 1,
-                    origin[0] +  flow_item->output_format[0].format_1d.size[0] - 1,
-                    origin[1] + (flow_item->output_format[0].format>=NN_DATA_FORMAT_2D ? flow_item->output_format[0].format_2d.size[1] : 1) - 1,
-                    (origin[2] + (flow_item->output_format[0].format >= NN_DATA_FORMAT_3D ? flow_item->output_format[0].format_3d.size[2] : 1)) / input_data->parent->lengths.t[NN_DATA_COORD_p] - 1,
-                    input_data->view_end.t[NN_DATA_COORD_p] - input_data->view_begin.t[NN_DATA_COORD_p],
-                    0
-                );
-
-                load_item->output[0] = new nn::workload_data<float>(*input_data, start, end);
-                break;
-            }
-            case NN_WORK_ITEM_TYPE_MERGE: {
-                uint16_t axis = flow_item->arguments.forward_merge.axis; // x = 0, y = 1, z = 2
-                auto& input = flow_item->input[0];
-                auto input_data = flow_to_work[input.item]->output[input.index];
-                nn_workload_data_layout_t previous_layout = input_data->parent->layout;
-
-                uint32_t x_size = input_data->parent->lengths.t[1];
-                uint32_t y_size = input_data->parent->lengths.t[2];
-                uint32_t z_size = input_data->parent->lengths.t[3];
-                for (int index = 1; index < flow_item->input_count; index++)
-                {
-                    auto& input_indexed = flow_item->input[index];
-                    auto input_data_local = flow_to_work[input_indexed.item]->output[input_indexed.index];
-                    if (input_data->parent->layout!=previous_layout)
-                        assert(0);
-
-                    if (axis == 0)
-                        x_size += input_data_local->parent->lengths.t[1];
-                    else if (axis == 1)
-                        y_size += input_data_local->parent->lengths.t[2];
-                    else if (axis == 2)
-                        z_size += input_data_local->parent->lengths.t[3];
-                }
-
-                nn_workload_data_coords_t size(
-                    input_data->parent->lengths.t[0],
-                    x_size + padding_left + padding_right,
-                    y_size + padding_top + padding_bottom,
-                    z_size,
-                    input_data->parent->lengths.t[4],
-                    input_data->parent->lengths.t[5]
-                );
-
-                // allocate
-                load_item->output[0] = new nn_workload_data_t;
-                nn_workload_data_placement_create(load_item->output[0], nullptr, &size, &previous_layout);
-
-                nn_workload_data_coords_t start_coords(
-                    0, 
-                    input_data->view_begin.t[NN_DATA_COORD_x] + padding_left, 
-                    input_data->view_begin.t[NN_DATA_COORD_y] + padding_top, 
-                    0, 
-                    0, 
-                    0);
-
-                nn_workload_data_coords_t end_coords(
-                    input_data->parent->lengths.t[0] - 1,
-                    input_data->view_end.t[NN_DATA_COORD_x] - padding_right,
-                    input_data->view_end.t[NN_DATA_COORD_y] - padding_bottom,
-                    z_size - 1,
-                    input_data->parent->lengths.t[4] - 1,
-                    input_data->parent->lengths.t[5] - 1
-                );
-
-                uint32_t x_position = 0, y_position = 0, z_position = 0;
-
-                // pin to the input buffers
-                for (int index = 0; index < flow_item->input_count; index++)
-                {
-                    auto& input_indexed = flow_item->input[index];
-
-                    input_data = flow_to_work[input_indexed.item]->output[input_indexed.index];
-
-                    if (axis == 0)
-                    {
-                        start_coords.t[1] = x_position;
-                        x_position += input_data->parent->lengths.t[1];
-                        end_coords.t[1] = x_position - 1;
-                    }
-                    else if (axis == 1)
-                    {
-                        start_coords.t[2] = y_position;
-                        y_position += input_data->parent->lengths.t[2];
-                        end_coords.t[2] = y_position - 1;
-                    }
-                    else if (axis == 2)
-                    {
-                        start_coords.t[3] = z_position;
-                        z_position += input_data->parent->lengths.t[3];
-                        end_coords.t[3] = z_position - 1;
-                    }
-
-                    delete flow_to_work[input_indexed.item]->output[input_indexed.index];
-                    nn_workload_data_t *merge_output = load_item->output[0];
-                    flow_to_work[input_indexed.item]->output[input_indexed.index] = nn_workload_data_create_view(merge_output, &start_coords, &end_coords);
-                }
-
-                break;
-            }
-            case NN_WORK_ITEM_TYPE_ARITHMETIC:
-            case NN_WORK_ITEM_TYPE_CONVOLUTION:
-            case NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2:
-            case NN_WORK_ITEM_TYPE_POOLING:
-            case NN_WORK_ITEM_TYPE_NORMALIZATION:
-            case NN_WORK_ITEM_TYPE_RELU_3D:
-            {
-                // views broken in arithmetic and element wise normalization
-                if (load_item->type == NN_WORK_ITEM_TYPE_ARITHMETIC ||
-                    (load_item->type == NN_WORK_ITEM_TYPE_NORMALIZATION &&
-                     flow_item->arguments.forward_normalization.normalization.mode ==
-                         NN_NORMALIZATION_MODE_LINEAR_SINGLE)) {
-                    if (flow_item->use[0].item->type == NN_WORK_ITEM_TYPE_MERGE ||
-                        flow_item->input[0].item->type == NN_WORK_ITEM_TYPE_VIEW)
-                        throw NN_DATA_STATUS_ERROR_INVALID_PARAMETERS;
-                    if (padding_left != 0 || padding_right != 0 || padding_top != 0 || padding_bottom != 0)
-                        throw NN_DATA_STATUS_ERROR_INVALID_PARAMETERS;
-                }
-            }
-            case NN_WORK_ITEM_TYPE_RELU_1D:
-            case NN_WORK_ITEM_TYPE_CONVERT_FLOAT_TO_INT16_FIXEDPOINT:
-            case NN_WORK_ITEM_TYPE_FULLY_CONNECTED:
-            case NN_WORK_ITEM_TYPE_NORMALIZATION_RESPONSE_ACROSS_MAPS_FORWARD_I16QN:
-            case NN_WORK_ITEM_TYPE_MAX_POOLING_INT16_FIXEDPOINT:
-            case NN_WORK_ITEM_TYPE_SOFTMAX_FIXEDPOINT:
-            case NN_WORK_ITEM_TYPE_SOFTMAX:
-            case NN_WORK_ITEM_TYPE_DROPOUT:
-            case NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I32QN:
-            case NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I16QN: 
-            case NN_WORK_ITEM_TYPE_CONVOLUTION_INT16_FIXEDPOINT:
-            case NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2_INT16_FIXEDPOINT:{
-
-                load_item->output[0] = load_item->primitive->create_outputs()[0];
-                break;
-            }
-            case NN_WORK_ITEM_TYPE_FULLY_CONNECTED_BACKPROP:
-            case NN_WORK_ITEM_TYPE_CONVOLUTION_BACKPROP: {
-                auto parameters = load_item->forward_item->primitive->create_parameters();
-                load_item->output[1] = parameters[0];
-                load_item->output[2] = parameters[1];
-            }
-            case NN_WORK_ITEM_TYPE_RELU_1D_BACKPROP:
-            case NN_WORK_ITEM_TYPE_RELU_3D_BACKPROP:
-            case NN_WORK_ITEM_TYPE_POOLING_BACKPROP:
-            case NN_WORK_ITEM_TYPE_SOFTMAX_BACKPROP:
-            case NN_WORK_ITEM_TYPE_NORMALIZATION_BACKPROP:
-            case NN_WORK_ITEM_TYPE_DROPOUT_BACKPROP:{
-                auto inputs = load_item->forward_item->primitive->create_inputs();
-                load_item->output[0] = inputs[0];
-                break;
-            }
-            case NN_WORK_ITEM_TYPE_LOSS_FUNCTION:
-            {
-                load_item->output[0] =
-                    new nn::workload_data<float>(NN_WORKLOAD_DATA_TAG_UNKNOWN,
-                                                      load_item->input[0].get_data_view()->parent->lengths,
-                                                      load_item->input[0].get_data_view()->parent->layout);
-                break;
-            }
-
-            case NN_WORK_ITEM_TYPE_AVERAGE_DELTAS:
-            {
-                assert(flow_item->input_count == flow_item->output_count);
-
-                for (uint32_t parameter = 0; parameter < flow_item->input_count; ++parameter)
-                {
-                    // TODO: add and use primitive function for this.
-                    auto input = load_item->input[parameter].get_data_view();
-
-                    nn_workload_data_coords_t size (
-                        1,
-                        input->parent->lengths.t[NN_DATA_COORD_x],
-                        input->parent->lengths.t[NN_DATA_COORD_y],
-                        input->parent->lengths.t[NN_DATA_COORD_z],
-                        input->parent->lengths.t[NN_DATA_COORD_p],
-                        input->parent->lengths.t[NN_DATA_COORD_q]
-                    );
-
-                    load_item->output[parameter] =
-                        new nn::workload_data<float>(NN_WORKLOAD_DATA_TAG_UNKNOWN, size, input->parent->layout);
-                }
-
-                break;
-            }
-
-            case NN_WORK_ITEM_TYPE_UPDATE_ARGUMENTS:
-            {
-                // Do nothing..
-                break;
-            }
-            default:
-                // If this assert fires it meant that new workflow item type was added, but its support
-                // was not added to compile function.
-                // This switch must contain *all* workflow items on the API.
+        uint32_t x_size = input_data->parent->lengths.t[1];
+        uint32_t y_size = input_data->parent->lengths.t[2];
+        uint32_t z_size = input_data->parent->lengths.t[3];
+        for (int index = 1; index < flow_item->input_count; index++)
+        {
+            auto& input_indexed = load_item->input[index];
+            auto input_data_local = input_indexed.item->output[input_indexed.index]; //flow_to_work[input_indexed.item]->output[input_indexed.index];
+            if (input_data->parent->layout != previous_layout)
                 assert(0);
-            } // switch
 
-            // copy arguments, fill buffers
-            // TODO: flow_item and load_item arguments union use different structures - possible corruption.
-            assert(sizeof(load_item->arguments) >= sizeof(flow_item->arguments));
-            std::memcpy(&load_item->arguments, &flow_item->arguments, sizeof(load_item->arguments));
+            if (axis == 0)
+                x_size += input_data_local->parent->lengths.t[1];
+            else if (axis == 1)
+                y_size += input_data_local->parent->lengths.t[2];
+            else if (axis == 2)
+                z_size += input_data_local->parent->lengths.t[3];
+        }
 
-            switch(load_item->type) {
-            case NN_WORK_ITEM_TYPE_CONVOLUTION: {
-                auto parameters = load_item->primitive->create_parameters();
+        nn_workload_data_coords_t size(
+            input_data->parent->lengths.t[0],
+            x_size + padding_left + padding_right,
+            y_size + padding_top + padding_bottom,
+            z_size,
+            input_data->parent->lengths.t[4],
+            input_data->parent->lengths.t[5]
+            );
 
-                copy_data(device, parameters[0], flow_item->arguments.forward_convolution.weights);
-                copy_data(device, parameters[1], flow_item->arguments.forward_convolution.biases);
+        // allocate
+        load_item->output[0] = new nn_workload_data_t;
+        nn_workload_data_placement_create(load_item->output[0], nullptr, &size, &previous_layout);
 
-                load_item->parameters.resize(parameters.size());
-                for (size_t i = 0; i < parameters.size(); ++i)
-                    load_item->parameters[i] = parameters[i];
+        memset(load_item->output[0]->parent->data_buffer, 0, load_item->output[0]->parent->buffer_size);
 
-                break;
+        nn_workload_data_coords_t start_coords(
+            0,
+            input_data->view_begin.t[NN_DATA_COORD_x] + padding_left,
+            input_data->view_begin.t[NN_DATA_COORD_y] + padding_top,
+            0,
+            0,
+            0);
+
+        nn_workload_data_coords_t end_coords(
+            input_data->parent->lengths.t[0] - 1,
+            input_data->view_end.t[NN_DATA_COORD_x] + padding_left,
+            input_data->view_end.t[NN_DATA_COORD_y] + padding_top,
+            z_size - 1,
+            input_data->parent->lengths.t[4] - 1,
+            input_data->parent->lengths.t[5] - 1
+            );
+
+        load_item->output[0]->view_begin = start_coords;
+        load_item->output[0]->view_end = end_coords;
+
+        uint32_t x_position = 0, y_position = 0, z_position = 0;
+
+        // pin to the input buffers
+        for (int index = 0; index < flow_item->input_count; index++)
+        {
+            auto& input_indexed = load_item->input[index];
+
+            input_data = input_indexed.item->output[input_indexed.index];
+
+            if (axis == 0)
+            {
+                start_coords.t[1] = x_position;
+                x_position += input_data->parent->lengths.t[1];
+                end_coords.t[1] = x_position - 1;
             }
-            case NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2: {
-                auto parameters = load_item->primitive->create_parameters();
-
-                copy_data(device, parameters[0], flow_item->arguments.forward_convolution_pooling_max_2x2_stride_2x2.weights);
-                copy_data(device, parameters[1], flow_item->arguments.forward_convolution_pooling_max_2x2_stride_2x2.biases);
-
-                load_item->parameters.resize(parameters.size());
-                for (size_t i = 0; i < parameters.size(); ++i)
-                    load_item->parameters[i] = parameters[i];
-
-                break;
+            else if (axis == 1)
+            {
+                start_coords.t[2] = y_position;
+                y_position += input_data->parent->lengths.t[2];
+                end_coords.t[2] = y_position - 1;
             }
-            case NN_WORK_ITEM_TYPE_FULLY_CONNECTED: {
-                auto parameters = load_item->primitive->create_parameters();
-
-                copy_data(device, parameters[0], flow_item->arguments.forward_fully_connected.weights);
-                copy_data(device, parameters[1], flow_item->arguments.forward_fully_connected.biases);
-
-                load_item->parameters.resize(parameters.size());
-                for (size_t i = 0; i < parameters.size(); ++i)
-                    load_item->parameters[i] = parameters[i];
-
-                break;
-            }
-            case NN_WORK_ITEM_TYPE_ARITHMETIC: {
-                auto parameters = load_item->primitive->create_parameters();
-
-                copy_data(device, parameters[0], flow_item->arguments.forward_arithmetic.factor);
-
-                load_item->parameters.resize(parameters.size());
-                for (size_t i = 0; i < parameters.size(); ++i)
-                    load_item->parameters[i] = parameters[i];
-
-                break;
-            }
-            case NN_WORK_ITEM_TYPE_CONVOLUTION_INT16_FIXEDPOINT: {
-                auto parameters = load_item->primitive->create_parameters();
-
-                copy_data(device, parameters[0], flow_item->arguments.forward_convolution_int16_fixedpoint.weights);
-                copy_data(device, parameters[1], flow_item->arguments.forward_convolution_int16_fixedpoint.biases);
-
-                load_item->parameters.resize(parameters.size());
-                for (size_t i = 0; i < parameters.size(); ++i)
-                    load_item->parameters[i] = parameters[i];
-
-                break;
-            }
-            case NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2_INT16_FIXEDPOINT: {
-                auto parameters = load_item->primitive->create_parameters();
-
-                copy_data(device, parameters[0], flow_item->arguments.forward_convolution_pooling_max_2x2_stride_2x2.weights);
-                copy_data(device, parameters[1], flow_item->arguments.forward_convolution_pooling_max_2x2_stride_2x2.biases);
-
-                load_item->parameters.resize(parameters.size());
-                for (size_t i = 0; i < parameters.size(); ++i)
-                    load_item->parameters[i] = parameters[i];
-
-                break;
-            }
-            case NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I16QN:
-            case NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I32QN: {
-                auto parameters = load_item->primitive->create_parameters();
-
-                copy_data(device, parameters[0], flow_item->arguments.fully_connected_forward_i16qn_i16qn.weights);
-                copy_data(device, parameters[1], flow_item->arguments.fully_connected_forward_i16qn_i16qn.biases);
-
-                load_item->parameters.resize(parameters.size());
-                for (size_t i = 0; i < parameters.size(); ++i)
-                    load_item->parameters[i] = parameters[i];
-
-                break;
-            }
-            default:
-                // This is the case when all workflow item arguments are empty or do not contain buffers.
-                ;
+            else if (axis == 2)
+            {
+                start_coords.t[1] = 0;
+                start_coords.t[2] = 0;
+                end_coords.t[1] = x_size - 1;
+                end_coords.t[2] = y_size - 1;
+                start_coords.t[3] = z_position;
+                z_position += input_data->parent->lengths.t[3];
+                end_coords.t[3] = z_position - 1;
             }
 
-} // end of function nn_workflow_compile_0_function_copy_item
-} // end of namespace
+            delete input_indexed.item->output[input_indexed.index];
+            nn_workload_data_t *merge_output = load_item->output[0];
+            auto &input_items_output = input_indexed.item->output[input_indexed.index];
+            input_items_output = nn_workload_data_create_view(merge_output, &start_coords, &end_coords);
+            assert(input_items_output != nullptr);
+        }
 
+        break;
+    }
+    case NN_WORK_ITEM_TYPE_NORMALIZATION:
+    case NN_WORK_ITEM_TYPE_POOLING:
+        if(flow_item->output_count == 2)
+        {   // These layers needs intermediate output during learning.
+            load_item->output[1] = load_item->primitive->create_outputs()[0];
+        }
+    case NN_WORK_ITEM_TYPE_ARITHMETIC:
+    case NN_WORK_ITEM_TYPE_CONVOLUTION:
+    case NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2:
+    case NN_WORK_ITEM_TYPE_RELU_3D:
+    {
+        // views broken in arithmetic and element wise normalization
+        if (load_item->type == NN_WORK_ITEM_TYPE_ARITHMETIC ||
+            (load_item->type == NN_WORK_ITEM_TYPE_NORMALIZATION &&
+             flow_item->arguments.forward_normalization.normalization.mode ==
+                 NN_NORMALIZATION_MODE_LINEAR_SINGLE)) {
+            if (flow_item->use[0].item->type == NN_WORK_ITEM_TYPE_MERGE ||
+                flow_item->input[0].item->type == NN_WORK_ITEM_TYPE_VIEW)
+                throw NN_DATA_STATUS_ERROR_INVALID_PARAMETERS;
+            if (padding_left != 0 || padding_right != 0 || padding_top != 0 || padding_bottom != 0)
+                throw NN_DATA_STATUS_ERROR_INVALID_PARAMETERS;
+        }
+    }
+    case NN_WORK_ITEM_TYPE_RELU_1D:
+    case NN_WORK_ITEM_TYPE_CONVERT_FLOAT_TO_INT16_FIXEDPOINT:
+    case NN_WORK_ITEM_TYPE_FULLY_CONNECTED:
+    case NN_WORK_ITEM_TYPE_NORMALIZATION_RESPONSE_ACROSS_MAPS_FORWARD_I16QN:
+    case NN_WORK_ITEM_TYPE_MAX_POOLING_INT16_FIXEDPOINT:
+    case NN_WORK_ITEM_TYPE_SOFTMAX_FIXEDPOINT:
+    case NN_WORK_ITEM_TYPE_SOFTMAX:
+    case NN_WORK_ITEM_TYPE_DROPOUT:
+    case NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I32QN:
+    case NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I16QN:
+    case NN_WORK_ITEM_TYPE_CONVOLUTION_INT16_FIXEDPOINT:
+    case NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2_INT16_FIXEDPOINT:
+    {
+        load_item->output[0] = load_item->primitive->create_outputs()[0];
+        break;
+    }
+    case NN_WORK_ITEM_TYPE_FULLY_CONNECTED_BACKPROP:
+    case NN_WORK_ITEM_TYPE_CONVOLUTION_BACKPROP: {
+        auto parameters = load_item->forward_item->primitive->create_parameters();
+        load_item->output[1] = parameters[0];
+        load_item->output[2] = parameters[1];
+    }
+    case NN_WORK_ITEM_TYPE_RELU_1D_BACKPROP:
+    case NN_WORK_ITEM_TYPE_RELU_3D_BACKPROP:
+    case NN_WORK_ITEM_TYPE_POOLING_BACKPROP:
+    case NN_WORK_ITEM_TYPE_SOFTMAX_BACKPROP:
+    case NN_WORK_ITEM_TYPE_SOFTMAX_LOSS_BACKPROP:
+    case NN_WORK_ITEM_TYPE_NORMALIZATION_BACKPROP:
+    case NN_WORK_ITEM_TYPE_DROPOUT_BACKPROP:{
+        auto inputs = load_item->forward_item->primitive->create_inputs();
+        load_item->output[0] = inputs[0];
+
+        // Cleanup all unnecessary buffers that were created.
+        for(uint32_t input_index = 1; input_index < inputs.size(); ++input_index)
+            delete inputs[input_index];
+        break;
+    }
+    case NN_WORK_ITEM_TYPE_SOFTMAX_LOSS:
+    {
+        auto outputs = load_item->primitive->create_outputs();
+        load_item->output[0] = outputs[0];
+        load_item->output[1] = outputs[1];
+        break;
+    }
+    case NN_WORK_ITEM_TYPE_LOSS_FUNCTION:
+    {
+        load_item->output[0] =
+            new nn::workload_data<>(NN_WORKLOAD_DATA_TAG_UNKNOWN,
+                                              load_item->input[0].get_data_view()->parent->lengths,
+                                              load_item->input[0].get_data_view()->parent->layout);
+        break;
+    }
+
+    case NN_WORK_ITEM_TYPE_AVERAGE_DELTAS:
+    {
+        assert(flow_item->input_count == flow_item->output_count);
+
+        for (uint32_t parameter = 0; parameter < flow_item->input_count; ++parameter)
+        {
+            // TODO: add and use primitive function for this.
+            auto input = load_item->input[parameter].get_data_view();
+
+            nn_workload_data_coords_t size (
+                1,
+                input->parent->lengths.t[NN_DATA_COORD_x],
+                input->parent->lengths.t[NN_DATA_COORD_y],
+                input->parent->lengths.t[NN_DATA_COORD_z],
+                input->parent->lengths.t[NN_DATA_COORD_p],
+                input->parent->lengths.t[NN_DATA_COORD_q]
+            );
+
+            load_item->output[parameter] =
+                new nn::workload_data<>(NN_WORKLOAD_DATA_TAG_UNKNOWN, size, input->parent->layout);
+        }
+
+        break;
+    }
+
+    case NN_WORK_ITEM_TYPE_UPDATE_ARGUMENTS:
+    {
+        // Do nothing..
+        break;
+    }
+    default:
+        // If this assert fires it meant that new workflow item type was added, but its support
+        // was not added to compile function.
+        // This switch must contain *all* workflow items on the API.
+        assert(0);
+    } // switch
+
+    // copy arguments, fill buffers
+    // TODO: flow_item and load_item arguments union use different structures - possible corruption.
+    assert(sizeof(load_item->arguments) >= sizeof(flow_item->arguments));
+    std::memcpy(&load_item->arguments, &flow_item->arguments, sizeof(load_item->arguments));
+
+    if( NN_WORK_ITEM_TYPE_INPUT == flow_item->type ) {
+        // If input is connected directly to merge layer switch copy flag
+        if( NN_WORK_ITEM_TYPE_MERGE == flow_item->use[0].item->type )
+            load_item->arguments.input.copy_on_merge = true;
+        else
+            load_item->arguments.input.copy_on_merge = false;
+    }
+
+    switch(load_item->type) {
+    case NN_WORK_ITEM_TYPE_CONVOLUTION: {
+        auto parameters = load_item->primitive->create_parameters();
+
+        copy_data(device, parameters[0], flow_item->arguments.forward_convolution.weights);
+        copy_data(device, parameters[1], flow_item->arguments.forward_convolution.biases);
+
+        load_item->parameters.resize(parameters.size());
+        for (size_t i = 0; i < parameters.size(); ++i)
+            load_item->parameters[i] = parameters[i];
+
+        break;
+    }
+    case NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2: {
+        auto parameters = load_item->primitive->create_parameters();
+
+        copy_data(device, parameters[0], flow_item->arguments.forward_convolution_pooling_max_2x2_stride_2x2.weights);
+        copy_data(device, parameters[1], flow_item->arguments.forward_convolution_pooling_max_2x2_stride_2x2.biases);
+
+        load_item->parameters.resize(parameters.size());
+        for (size_t i = 0; i < parameters.size(); ++i)
+            load_item->parameters[i] = parameters[i];
+
+        break;
+    }
+    case NN_WORK_ITEM_TYPE_FULLY_CONNECTED: {
+        auto parameters = load_item->primitive->create_parameters();
+
+        copy_data(device, parameters[0], flow_item->arguments.forward_fully_connected.weights);
+        copy_data(device, parameters[1], flow_item->arguments.forward_fully_connected.biases);
+
+        load_item->parameters.resize(parameters.size());
+        for (size_t i = 0; i < parameters.size(); ++i)
+            load_item->parameters[i] = parameters[i];
+
+        break;
+    }
+    case NN_WORK_ITEM_TYPE_ARITHMETIC: {
+        auto parameters = load_item->primitive->create_parameters();
+
+        copy_data(device, parameters[0], flow_item->arguments.forward_arithmetic.factor);
+
+        load_item->parameters.resize(parameters.size());
+        for (size_t i = 0; i < parameters.size(); ++i)
+            load_item->parameters[i] = parameters[i];
+
+        break;
+    }
+    case NN_WORK_ITEM_TYPE_CONVOLUTION_INT16_FIXEDPOINT: {
+        auto parameters = load_item->primitive->create_parameters();
+
+        copy_data(device, parameters[0], flow_item->arguments.forward_convolution_int16_fixedpoint.weights);
+        copy_data(device, parameters[1], flow_item->arguments.forward_convolution_int16_fixedpoint.biases);
+
+        load_item->parameters.resize(parameters.size());
+        for (size_t i = 0; i < parameters.size(); ++i)
+            load_item->parameters[i] = parameters[i];
+
+        break;
+    }
+    case NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2_INT16_FIXEDPOINT: {
+        auto parameters = load_item->primitive->create_parameters();
+
+        copy_data(device, parameters[0], flow_item->arguments.forward_convolution_pooling_max_2x2_stride_2x2.weights);
+        copy_data(device, parameters[1], flow_item->arguments.forward_convolution_pooling_max_2x2_stride_2x2.biases);
+
+        load_item->parameters.resize(parameters.size());
+        for (size_t i = 0; i < parameters.size(); ++i)
+            load_item->parameters[i] = parameters[i];
+
+        break;
+    }
+    case NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I16QN:
+    case NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I32QN: {
+        auto parameters = load_item->primitive->create_parameters();
+
+        copy_data(device, parameters[0], flow_item->arguments.fully_connected_forward_i16qn_i16qn.weights);
+        copy_data(device, parameters[1], flow_item->arguments.fully_connected_forward_i16qn_i16qn.biases);
+
+        load_item->parameters.resize(parameters.size());
+        for (size_t i = 0; i < parameters.size(); ++i)
+            load_item->parameters[i] = parameters[i];
+
+        break;
+    }
+    default:
+        // This is the case when all workflow item arguments are empty or do not contain buffers.
+        ;
+    }
+
+}
+
+template <typename T_FlowUpdateFunc>
+void add_conversions_to_batch_block(
+    nn_workload_item_t *load_item,
+    T_FlowUpdateFunc update_flow,
+    uint32_t batch_size,
+    nn_device_internal* device)
+{
+    auto create_to_batch_block_conversion = [&](nn_workload_use_descriptor input,
+                                                uint32_t x_size,
+                                                uint32_t y_size,
+                                                uint32_t z_size)
+        {
+            auto ret = new nn_workload_item_t();
+            ret->primitive = new layer::convert_from_zxyn_to_batch_block_format_nzxyn(
+                        batch_size, x_size, y_size, z_size, device);
+            ret->type = NN_WORK_ITEM_TYPE_CONVERT_DATA_LAYOUT;
+            ret->name = "convert_to_batch_block_before_convolution";
+
+            ret->output.push_back(
+                nn::data_helper<NN_WORKLOAD_DATA_TAG_NBLOCKZXYN, nn::layout_nblockzxyn_f32>::create(
+                    batch_size,
+                    x_size,
+                    y_size,
+                    z_size,
+                    BATCH_ACCEPTED_BLOCK));
+            ret->input = decltype(ret->input)({input});
+            return ret;
+        };
+
+    //input conversions
+    for (auto& input_descr : load_item->input)
+    {
+        auto input_data = input_descr.get_data_view();
+        if (input_data->parent->layout == (nn::data_helper<NN_WORKLOAD_DATA_TAG_NBLOCKZXYN, nn::layout_nblockzxyn_f32>::layout))
+            continue;
+        if (input_data->parent->layout != (nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::layout))
+            throw std::runtime_error("implementation error: invalid input data layout for conversion to batch block layout");
+        auto conversion = create_to_batch_block_conversion(
+            input_descr,
+            get_length(*input_data, NN_DATA_COORD_x),
+            get_length(*input_data, NN_DATA_COORD_y),
+            get_length(*input_data, NN_DATA_COORD_z));
+
+        update_flow(conversion, load_item);
+        input_descr.item = conversion;
+        input_descr.index = 0;
+    }
+}
+
+template <typename T_FlowUpdateFunc, typename T_UsedByCont>
+void add_conversions_from_batch_block(
+    nn_workload_item_t *load_item,
+    T_FlowUpdateFunc update_flow,
+    const T_UsedByCont& used_by,
+    uint32_t batch_size,
+    nn_device_internal* device)
+{
+    auto create_from_batch_block_conversion = [&](nn_workload_data_layout_t output_layout,
+                                                  uint32_t x_size,
+                                                  uint32_t y_size,
+                                                  uint32_t z_size)
+        {
+            auto ret = new nn_workload_item_t();
+            ret->primitive = new layer::convert_from_batch_block_format_to_zxyn(
+                        batch_size, x_size, y_size, z_size, device);
+            ret->type = NN_WORK_ITEM_TYPE_CONVERT_DATA_LAYOUT;
+            ret->name = "convert_from_batch_block_after_convolution";
+
+            if (output_layout == nn::layout_t<nn::layout_zxyn_f32>::layout)
+            {
+                ret->output.push_back(
+                    nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::create(
+                        nullptr,
+                        x_size,
+                        y_size,
+                        z_size,
+                        batch_size,
+                        0, 0, 0, 0, false));
+            }
+            else if (output_layout == nn::layout_t<nn::layout_nx_f32>::layout)
+            {
+                ret->output.push_back(
+                    nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, nn::layout_nx_f32>::create(
+                        nullptr,
+                        x_size * y_size * z_size,
+                        batch_size));
+            }
+            else if (output_layout == nn::layout_t<nn::layout_xyzpqn_f32>::layout)
+            {
+                auto output_data_buffer = new nn::workload_data<>(
+                    NN_WORKLOAD_DATA_TAG_UNKNOWN,
+                    nn_workload_data_coords_t(batch_size, x_size * y_size * z_size, 1, 1, 1, 1),
+                    nn::layout_t<nn::layout_xyzpqn_f32>::layout);
+                ret->output.push_back(output_data_buffer);
+            }
+            ret->input = decltype(ret->input)({{load_item, 0}});
+            return ret;
+        };
+    //output conversions
+    for (auto next : used_by)
+    {
+        if (next->type == NN_WORK_ITEM_TYPE_CONVOLUTION) continue;
+        if (next->type == NN_WORK_ITEM_TYPE_MERGE) continue;
+        auto it = std::find_if(next->input.begin(), next->input.end(),
+            [&](nn_workload_use_descriptor descr){ return descr.item == load_item; });
+        assert(it != next->input.end());
+        auto output_data = it->get_data_view();
+        if (next->output[0]->parent->layout == (nn::data_helper<NN_WORKLOAD_DATA_TAG_NBLOCKZXYN, nn::layout_nblockzxyn_f32>::layout))
+            continue;
+
+        auto conversion = create_from_batch_block_conversion(
+            next->output[0]->parent->layout,
+            get_length(*output_data, NN_DATA_COORD_x),
+            get_length(*output_data, NN_DATA_COORD_y),
+            get_length(*output_data, NN_DATA_COORD_z));
+
+        update_flow(conversion, next);
+        it->item = conversion;
+        it->index = 0;
+    }
+}
+
+template <typename T_Flow>
+void nn_workflow_compile_add_batch_block_conversions(
+    nn_workload_item_t* load_item,
+    uint32_t            batch,
+    T_Flow&             all_items,
+    nn_device_internal* device)
+{
+    auto update_flow = [&](nn_workload_item_t* new_item, nn_workload_item_t* used_by) {
+            typedef typename T_Flow::value_type FlowElemType;
+            auto it = std::find_if(all_items.begin(), all_items.end(),
+                                   [&](FlowElemType elem){ return elem.first == used_by; });
+            all_items.insert(it, std::make_pair(new_item, nullptr));
+        };
+
+    std::vector<nn_workload_item_t*> used_by;
+    for (auto elem : all_items)
+        for (auto input_descr : elem.first->input)
+            if (input_descr.item == load_item)
+                used_by.push_back(elem.first);
+    if (batch % BATCH_ACCEPTED_BLOCK == 0)
+    {
+        if (load_item->output.empty()) return;
+        if (load_item->output.front()->parent->layout == nn::data_helper<NN_WORKLOAD_DATA_TAG_NBLOCKZXYN, nn::layout_nblockzxyn_f32>::layout)
+        {
+            if (load_item->type != NN_WORK_ITEM_TYPE_MERGE)
+                add_conversions_to_batch_block(load_item, update_flow, batch, device);
+            add_conversions_from_batch_block(load_item, update_flow, used_by, batch, device);
+        }
+    }
+}
+
+template <typename T_Flow>
 void nn_workflow_compile_0_function_add_conversions(
     nn_workload_item_t *load_item,
     nn_workflow_item_t *flow_item,
     uint32_t            batch,
     NN_WORKLOAD_DATA_TYPE  *input_format,   /* array containing formats of inputs */
-    NN_WORKLOAD_DATA_TYPE  *output_format  /* array containing formats of outputs */
-    ){
-    if (batch > 1){
+    NN_WORKLOAD_DATA_TYPE  *output_format,  /* array containing formats of outputs */
+    T_Flow& all_items
+    ) {
+
+    auto update_flow = [&](nn_workload_item_t* new_item, nn_workload_item_t* used_by) {
+            typedef typename T_Flow::value_type FlowElemType;
+            auto it = std::find_if(all_items.begin(), all_items.end(),
+                                   [&](FlowElemType elem){ return elem.first == used_by; });
+            all_items.insert(it, std::make_pair(new_item, nullptr));
+        };
+    auto update_load = [&](nn_workload_item_t* conversion, nn_workload_item_t* next_load_item) {
+            update_flow(conversion, next_load_item);
+            for (auto &useinput : next_load_item->input)
+                if (useinput.item == load_item)
+                    useinput.item = conversion;
+        };
+
+    std::vector<nn_workload_item_t*> used_by;
+    for (auto elem : all_items)
+        for (auto input_descr : elem.first->input)
+            if (input_descr.item == load_item)
+                used_by.push_back(elem.first);
+
+    if (batch > 1)
+    {
         // add type2 conversions
-        auto init_type2_conversion = [&batch, &flow_item, &load_item] {
+        auto init_type2_conversion = [&batch, &flow_item, &load_item](std::string before) {
             auto conversion = new nn_workload_item_t;
             conversion->primitive = nullptr;
             conversion->type = NN_WORK_ITEM_TYPE_CONVERT_DATA_LAYOUT;
             conversion->arguments.convert_data_layout.type = 2;
+            conversion->name = "convert_layout2_before_"+ before;
 
-            nn_workload_data_layout_t layout = nn::workload_data<int32_t>::layout.nxyzpq;
+            auto layout = nn::layout_t<nn::layout_nxyzpq_i32>::layout;
 
             const uint32_t OutBlock = 2;
             nn_workload_data_coords_t size(
@@ -1158,30 +1558,26 @@ void nn_workflow_compile_0_function_add_conversions(
         };
 
         if (load_item->output.size() > 0 && load_item->output[0] != nullptr && load_item->output[0]->parent->layout.ordering.t[0] != NN_DATA_COORD_n) {
-            for (auto &next_load_item : load_item->use) {
-                if (next_load_item.item->type == NN_WORK_ITEM_TYPE_SOFTMAX_FIXEDPOINT) {
-                    auto type2_conversion = init_type2_conversion();
-                    type2_conversion->name = std::string("convert_layout2_before_") + next_load_item.item->name;
-
-                    for (auto &useinput : next_load_item.item->input)
-                    if (useinput.item == load_item) {
-                        useinput.item = type2_conversion;
-                        type2_conversion->use.push_back(next_load_item);
-                    }
-
-                    next_load_item.item = type2_conversion;
-                }
+            for (auto &next_load_item : used_by) {
+                if (next_load_item->type == NN_WORK_ITEM_TYPE_SOFTMAX_FIXEDPOINT)
+                    update_load(init_type2_conversion(next_load_item->name), next_load_item);
             }
         }
 
         // add type3 conversions
-        auto init_type3_conversion = [&batch, &flow_item, &load_item] {
+        auto init_type3_conversion = [&batch, &flow_item, &load_item](std::string before) {
             auto conversion = new nn_workload_item_t;
-            conversion->primitive = nullptr;
+            conversion->primitive = new layer::convert_z_block_xyz_z2nz(
+                        get_format_size<0>(flow_item->output_format[0]),
+                        get_format_size<1>(flow_item->output_format[0]),
+                        get_format_size<2>(flow_item->output_format[0]),
+                        batch,
+                        nullptr);
             conversion->type = NN_WORK_ITEM_TYPE_CONVERT_DATA_LAYOUT;
             conversion->arguments.convert_data_layout.type = 3;
+            conversion->name = "convert_layout3_before_"+ before;
 
-            nn_workload_data_layout_t layout = nn::workload_data<int16_t>::layout.pnzxyq;
+            nn_workload_data_layout_t layout = nn::layout_t<nn::layout_pnzxyq_i16>::layout;
 
             const uint32_t OutBlock = 2;
             nn_workload_data_coords_t size(
@@ -1197,39 +1593,33 @@ void nn_workflow_compile_0_function_add_conversions(
             return conversion;
         };
 
-        if (load_item->output.size() > 0 && load_item->output[0] != nullptr && load_item->output[0]->parent->layout.ordering.t[1] != NN_DATA_COORD_n) {
-            for (auto &next_load_item : load_item->use) {
-                if (next_load_item.item->type == NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I16QN ||
-                    next_load_item.item->type == NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I32QN) {
-                    auto type3_conversion = init_type3_conversion();
-                    type3_conversion->name = std::string("convert_layout3_before_") + next_load_item.item->name;
-
-                    for (auto &useinput : next_load_item.item->input)
-                    if (useinput.item == load_item) {
-                        useinput.item = type3_conversion;
-                        type3_conversion->use.push_back(next_load_item);
-                    }
-
-                    next_load_item.item = type3_conversion;
-                    next_load_item.item->primitive = new layer::convert_z_block_xyz_z2nz(
-                        get_format_size<0>(flow_item->output_format[0]),
-                        get_format_size<1>(flow_item->output_format[0]),
-                        get_format_size<2>(flow_item->output_format[0]),
-                        batch,
-                        nullptr);
+        if (load_item->output.size() > 0 && load_item->output[0] != nullptr && load_item->output[0]->parent->layout.ordering.t[1] != NN_DATA_COORD_n)
+        {
+            for (auto &next_load_item : used_by)
+            {
+                if (next_load_item->type == NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I16QN ||
+                    next_load_item->type == NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I32QN)
+                {
+                    update_load(init_type3_conversion(next_load_item->name), next_load_item);
                 }
             }
         }
     }
     else { // batch == 1
         // add type0 conversions
-        auto init_type0_conversion = [&batch, &flow_item, &load_item] {
+        auto init_type0_conversion = [&batch, &flow_item, &load_item](std::string before) {
             auto conversion = new nn_workload_item_t;
-            conversion->primitive = nullptr;
+            conversion->primitive = new layer::convert_z_block_xyz_z2nz(
+                        get_format_size<0>(flow_item->output_format[0]),
+                        get_format_size<1>(flow_item->output_format[0]),
+                        get_format_size<2>(flow_item->output_format[0]),
+                        batch,
+                        nullptr);
             conversion->type = NN_WORK_ITEM_TYPE_CONVERT_DATA_LAYOUT;
             conversion->arguments.convert_data_layout.type = 0;
+            conversion->name = "convert_layout0_before_"+ before;
 
-            nn_workload_data_layout_t layout = nn::workload_data<int16_t>::layout.pnzxyq;
+            nn_workload_data_layout_t layout = nn::layout_t<nn::layout_pnzxyq_i16>::layout;
 
             const uint32_t OutBlock = 2;
             nn_workload_data_coords_t size(
@@ -1247,95 +1637,124 @@ void nn_workflow_compile_0_function_add_conversions(
         };
 
         if (load_item->output.size() > 0 && load_item->output[0] != nullptr && flow_item->output_format[0].format == NN_DATA_FORMAT_3D) {
-            for (auto &next_load_item : load_item->use) {
-                if (next_load_item.item->type == NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I16QN ||
-                    next_load_item.item->type == NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I32QN) {
-                    auto type0_conversion = init_type0_conversion();
-                    type0_conversion->name = std::string("convert_layout3_before_") + next_load_item.item->name;
-
-                    for (auto &useinput : next_load_item.item->input)
-                    if (useinput.item == load_item) {
-                        useinput.item = type0_conversion;
-                        type0_conversion->use.push_back(next_load_item);
-                    }
-
-                    next_load_item.item = type0_conversion;
-                    next_load_item.item->primitive = new layer::convert_z_block_xyz_z2nz(
-                        get_format_size<0>(flow_item->output_format[0]),
-                        get_format_size<1>(flow_item->output_format[0]),
-                        get_format_size<2>(flow_item->output_format[0]),
-                        batch,
-                        nullptr);
+            for (auto &next_load_item : used_by) {
+                if (next_load_item->type == NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I16QN ||
+                    next_load_item->type == NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I32QN)
+                {
+                    update_load(init_type0_conversion(next_load_item->name), next_load_item);
                 }
             }
         }
     }
 
     // Add type4 conversions - float batch conversion (...n to n... OR n... to ...n)
-    auto init_type4_conversion = [&batch, &flow_item, &load_item] (nn_workload_data_layout_t& next_load_item_layout)
+    auto init_type4_conversion = [&flow_item, &load_item] (nn_workload_item_t* next_load_item, uint32_t type, uint32_t batch)
     {
         auto conversion = new nn_workload_item_t;
         conversion->primitive = nullptr;
         conversion->type = NN_WORK_ITEM_TYPE_CONVERT_DATA_LAYOUT;
         conversion->arguments.convert_data_layout.type = 4;
+        conversion->name = std::string("convert_layout4_before_") + next_load_item->name;
+
+        auto next_load_item_layout = next_load_item->output[0]->parent->layout;
+
+        nn_workload_data_coords_t new_lengths;
+
+        if(type == 0)
+        {
+            // Standard conversion.
+            new_lengths = load_item->output[0]->parent->lengths;
+        }
+        else if(type == 1)
+        {
+            // Squashing conversion.
+            new_lengths =
+            {
+                load_item->output[0]->parent->lengths.t[NN_DATA_COORD_n],
+                load_item->output[0]->parent->buffer_size / 4 / load_item->output[0]->parent->lengths.t[NN_DATA_COORD_n],
+                1,
+                1,
+                1,
+                1
+            };
+        }
+        else if(type == 2)
+        {
+            // Un-squashing conversion. Special case, can occur only in backward passes.
+            conversion->arguments.convert_data_layout.type = 7;
+            if(next_load_item->forward_item == nullptr)
+                throw std::runtime_error("add_conversion: unsquashing on forward passes occured");
+
+            new_lengths =
+            {
+                next_load_item->forward_item->output[0]->parent->lengths.t[NN_DATA_COORD_n],
+                next_load_item->forward_item->output[0]->parent->lengths.t[NN_DATA_COORD_x],
+                next_load_item->forward_item->output[0]->parent->lengths.t[NN_DATA_COORD_y],
+                next_load_item->forward_item->output[0]->parent->lengths.t[NN_DATA_COORD_z],
+                next_load_item->forward_item->output[0]->parent->lengths.t[NN_DATA_COORD_p],
+                next_load_item->forward_item->output[0]->parent->lengths.t[NN_DATA_COORD_q]
+            };
+        }
 
         if(batch != 1)
         {
-            // Actual conversion takes place.
-            conversion->output.push_back(new nn::workload_data<float>(
+            // Actual conversion takes place - new buffer.
+            conversion->output.push_back(new nn::workload_data<>(
                 NN_WORKLOAD_DATA_TAG_UNKNOWN,
-                load_item->output[0]->parent->lengths,
+                new_lengths,
                 next_load_item_layout));
         }
         else
         {
-            // Just add view.
-            conversion->output.push_back(new nn::workload_data<float>(
-                *static_cast<nn::workload_data<float>*>(load_item->output[0]),
-                load_item->output[0]->view_begin, 
-                load_item->output[0]->view_end));
+            // Just add view for old buffer.
+            conversion->output.push_back(new nn::workload_data<>(
+                load_item->output[0]->parent->data_buffer,
+                new_lengths,
+                next_load_item_layout));
         }
 
-        conversion->input.push_back({ load_item, 0 });
+        conversion->input.push_back({load_item, 0});
         return conversion;
     };
 
-    if (load_item->output.size() > 0 && 
+    if (load_item->output.size() > 0 &&
         load_item->output[0] != nullptr)
     {
-        auto load_item_layout = (load_item->type == NN_WORK_ITEM_TYPE_RELU_1D || load_item->type == NN_WORK_ITEM_TYPE_RELU_1D_BACKPROP ) 
-                                    ? nn::layout_t<float>::nxyzpq 
-                                    : load_item->output[0]->parent->layout;
+        auto load_item_layout = load_item->output[0]->parent->layout;
+        auto data_batch = load_item->output[0]->parent->lengths.t[NN_DATA_COORD_n];
 
-        for (auto &next_load_item : load_item->use)
+        for (auto &next_load_item : used_by)
         {
-            if (next_load_item.item->output.size() > 0 &&
-                next_load_item.item->type != NN_WORK_ITEM_TYPE_CONVERT_DATA_LAYOUT)
+            if (next_load_item->output.size() > 0 &&
+                next_load_item->type != NN_WORK_ITEM_TYPE_CONVERT_DATA_LAYOUT &&
+                data_batch == next_load_item->output[0]->parent->lengths.t[NN_DATA_COORD_n])
             {
-                auto next_item_layout = (next_load_item.item->type == NN_WORK_ITEM_TYPE_RELU_1D || next_load_item.item->type == NN_WORK_ITEM_TYPE_RELU_1D_BACKPROP ) 
-                                            ? nn::layout_t<float>::nxyzpq 
-                                            : next_load_item.item->output[0]->parent->layout;
+                auto next_item_layout = next_load_item->output[0]->parent->layout;
 
+                nn_workload_item_t* type4_conversion = nullptr;
+                //nn::layout_t<nn::layout_nxyzpq_f32>::layout
                 // Check if its one of allowed conversions.
-                if((load_item_layout == nn::layout_t<float>::zxynpq && next_item_layout == nn::layout_t<float>::nzxypq) || // ZXY-N -> N-ZXY
-                   (load_item_layout == nn::layout_t<float>::zxynpq && next_item_layout == nn::layout_t<float>::nxyzpq) || // ZXY-N -> N-X
-                   (load_item_layout == nn::layout_t<float>::nzxypq && next_item_layout == nn::layout_t<float>::zxynpq) || // N-ZXY -> ZXY-N
-                   (load_item_layout == nn::layout_t<float>::nxyzpq && next_item_layout == nn::layout_t<float>::zxynpq) || // N-X   -> ZXY-N
-                   (load_item_layout == nn::layout_t<float>::xyzpqn && next_item_layout == nn::layout_t<float>::nxyzpq) || // XYZ-N -> N-XYZ
-                   (load_item_layout == nn::layout_t<float>::nxyzpq && next_item_layout == nn::layout_t<float>::xyzpqn))   // N-XYZ -> XYZ-N
+                if((load_item_layout == nn::layout_t<nn::layout_zxynpq_f32>::layout && next_item_layout == nn::layout_t<nn::layout_nzxypq_f32>::layout) || // ZXY-N -> N-ZXY
+                   (load_item_layout == nn::layout_t<nn::layout_xyzpqn_f32>::layout && next_item_layout == nn::layout_t<nn::layout_nxyzpq_f32>::layout) || // XYZ-N -> N-XYZ
+                   (load_item_layout == nn::layout_t<nn::layout_nzxypq_f32>::layout && next_item_layout == nn::layout_t<nn::layout_zxynpq_f32>::layout) || // N-ZXY -> ZXY-N
+                   (load_item_layout == nn::layout_t<nn::layout_nxyzpq_f32>::layout && next_item_layout == nn::layout_t<nn::layout_xyzpqn_f32>::layout))   // N-XYZ -> XYZ-N
                 {
-                    auto type4_conversion = init_type4_conversion(next_item_layout);
-                    type4_conversion->name = std::string("convert_layout4_before_") + next_load_item.item->name;
-
-                    for (auto &useinput : next_load_item.item->input)
-                    if (useinput.item == load_item)
-                    {
-                        useinput.item = type4_conversion;
-                        type4_conversion->use.push_back(next_load_item);
-                    }
-
-                    next_load_item.item = type4_conversion;
+                    // Standard conversion.
+                    type4_conversion = init_type4_conversion(next_load_item, 0, data_batch);
                 }
+                else if(load_item_layout == nn::layout_t<nn::layout_zxynpq_f32>::layout && next_item_layout == nn::layout_t<nn::layout_nxyzpq_f32>::layout) // ZXY-N -> N-X
+                {
+                    // Squashing conversion.
+                    type4_conversion = init_type4_conversion(next_load_item, 1, data_batch);
+                }
+                else if(load_item_layout == nn::layout_t<nn::layout_nxyzpq_f32>::layout && next_item_layout == nn::layout_t<nn::layout_zxynpq_f32>::layout) // N-X -> ZXY-N
+                {
+                    // Un-squashing conversion.
+                    type4_conversion = init_type4_conversion(next_load_item, 2, data_batch);
+                }
+
+                if(type4_conversion != nullptr)
+                    update_load(type4_conversion, next_load_item);
             }
         }
     }
@@ -1347,7 +1766,7 @@ void nn_workflow_compile_0_function_add_conversions(
         conversion->type = NN_WORK_ITEM_TYPE_CONVERT_DATA_LAYOUT;
         conversion->arguments.convert_data_layout.type = 5;
 
-        nn_workload_data_layout_t layout = nn::workload_data<int16_t>::layout.pxyznq;
+        nn_workload_data_layout_t layout = nn::layout_t<nn::layout_pxyznq_i16>::layout;
 
         uint32_t z_size = flow_item->output_format[0].format >= NN_DATA_FORMAT_3D ? flow_item->output_format[0].format_3d.size[2] : 1;
         uint32_t z_block = z_size > 4 ? 16 : 4;
@@ -1360,28 +1779,22 @@ void nn_workflow_compile_0_function_add_conversions(
             z_block,
             1 );
 
-        conversion->output.push_back(new nn::workload_data<float>(NN_WORKLOAD_DATA_TAG_UNKNOWN, size, layout));
+        conversion->output.push_back(new nn::workload_data<>(NN_WORKLOAD_DATA_TAG_UNKNOWN, size, layout));
         conversion->input.push_back({ load_item, 0 });
         return conversion;
     };
 
     if (load_item->type == NN_WORK_ITEM_TYPE_INPUT) {
-        for (auto &next_load_item : load_item->use) {
-            if (next_load_item.item->type == NN_WORK_ITEM_TYPE_NORMALIZATION_RESPONSE_ACROSS_MAPS_FORWARD_I16QN ||
-                next_load_item.item->type == NN_WORK_ITEM_TYPE_MAX_POOLING_INT16_FIXEDPOINT ||
-                next_load_item.item->type == NN_WORK_ITEM_TYPE_CONVOLUTION_INT16_FIXEDPOINT ||
-                next_load_item.item->type == NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2_INT16_FIXEDPOINT) {
+        for (auto &next_load_item : used_by) {
+            if (next_load_item->type == NN_WORK_ITEM_TYPE_NORMALIZATION_RESPONSE_ACROSS_MAPS_FORWARD_I16QN ||
+                next_load_item->type == NN_WORK_ITEM_TYPE_MAX_POOLING_INT16_FIXEDPOINT ||
+                next_load_item->type == NN_WORK_ITEM_TYPE_CONVOLUTION_INT16_FIXEDPOINT ||
+                next_load_item->type == NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2_INT16_FIXEDPOINT) {
                 assert(input_format[load_item->arguments.input.index] == NN_WORKLOAD_DATA_TYPE_I16_ZXY); // TODO support other formats
                 auto type5_conversion = init_type5_conversion();
-                type5_conversion->name = std::string("convert_layout5_before_") + next_load_item.item->name;
+                type5_conversion->name = std::string("convert_layout5_before_") + next_load_item->name;
 
-                for (auto &useinput : next_load_item.item->input)
-                if (useinput.item == load_item) {
-                    useinput.item = type5_conversion;
-                    type5_conversion->use.push_back(next_load_item);
-                }
-
-                next_load_item.item = type5_conversion;
+                update_load(type5_conversion, next_load_item);
             }
         }
     }
@@ -1393,7 +1806,7 @@ void nn_workflow_compile_0_function_add_conversions(
         conversion->type = NN_WORK_ITEM_TYPE_CONVERT_DATA_LAYOUT;
         conversion->arguments.convert_data_layout.type = 6;
 
-        nn_workload_data_layout_t layout = nn::workload_data<int16_t>::layout.zxynpq;
+        nn_workload_data_layout_t layout = nn::layout_t<nn::layout_zxynpq_i16>::layout;
 
         nn_workload_data_coords_t size(
             batch,
@@ -1403,7 +1816,7 @@ void nn_workflow_compile_0_function_add_conversions(
             1,
             1 );
 
-        conversion->output.push_back(new nn::workload_data<float>(NN_WORKLOAD_DATA_TAG_UNKNOWN, size, layout));
+        conversion->output.push_back(new nn::workload_data<>(NN_WORKLOAD_DATA_TAG_UNKNOWN, size, layout));
         conversion->input.push_back({ load_item, 0 });
         return conversion;
     };
@@ -1413,22 +1826,160 @@ void nn_workflow_compile_0_function_add_conversions(
         load_item->type == NN_WORK_ITEM_TYPE_MAX_POOLING_INT16_FIXEDPOINT ||
         load_item->type == NN_WORK_ITEM_TYPE_CONVOLUTION_INT16_FIXEDPOINT ||
         load_item->type == NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2_INT16_FIXEDPOINT) {
-        for (auto &next_load_item : load_item->use) {
-            if (next_load_item.item->type == NN_WORK_ITEM_TYPE_OUTPUT) {
+        for (auto &next_load_item : used_by) {
+            if (next_load_item->type == NN_WORK_ITEM_TYPE_OUTPUT) {
                 auto type6_conversion = init_type6_conversion();
-                type6_conversion->name = std::string("convert_layout6_before_") + next_load_item.item->name;
+                type6_conversion->name = std::string("convert_layout6_before_") + next_load_item->name;
 
-                for (auto &useinput : next_load_item.item->input)
-                if (useinput.item == load_item) {
-                    useinput.item = type6_conversion;
-                    type6_conversion->use.push_back(next_load_item);
-                }
-
-                next_load_item.item = type6_conversion;
+                update_load(type6_conversion, next_load_item);
             }
         }
     }
 }
+
+
+std::vector<nn_workflow_item_t*> all_items(nn_workflow_t* workflow)
+{
+    typedef std::vector<nn_workflow_item_t*> WorkflowVec;
+    typedef std::unordered_set<nn_workflow_item_t*> WorkflowSet;
+
+    WorkflowVec all(workflow->input, workflow->input + workflow->input_count);
+    WorkflowSet visited(all.begin(), all.end());
+
+    int count = 0;
+    while (count < all.size())
+    {
+        auto curr = all[count];
+        auto push_elem = [&](nn_workflow_item_t* item) {
+                if (visited.count(item) != 0) return;
+                all.push_back(item);
+                visited.insert(item);
+            };
+
+        for(auto index = 0u; index < curr->use_count; ++index)
+            push_elem(curr->use[index].item);
+        ++count;
+    }
+    return all;
+}
+
+std::vector<nn_workflow_item_t*> flow_items_in_execution_order(nn_workflow_t* workflow)
+{
+    auto todo = all_items(workflow);
+    std::unordered_map<nn_workflow_item_t*, std::vector<nn_workflow_item_t*>> inputs;
+    for (auto item : todo)
+        for (auto i = 0u; i < item->use_count; ++i)
+            inputs[item->use[i].item].push_back(item);
+
+    decltype(todo) ret;
+    while(!todo.empty())
+    {
+        auto is_not_done = [todo](nn_workflow_item_t* item) {
+                return todo.end() != std::find(todo.begin(), todo.end(), item);
+            };
+        auto it = std::remove_if(todo.begin(), todo.end(),
+            [&](nn_workflow_item_t* item) {
+                auto all_inputs_done =
+                    (0 == std::count_if(inputs[item].begin(), inputs[item].end(), is_not_done));
+                if (all_inputs_done) ret.push_back(item);
+                return all_inputs_done;
+            });
+        todo.erase(it, todo.end());
+    }
+    return ret;
+}
+
+std::string str(NN_WORK_ITEM_TYPE type)
+{
+    switch (type)
+    {
+    case NN_WORK_ITEM_TYPE_INPUT: return "NN_WORK_ITEM_TYPE_INPUT";
+    case NN_WORK_ITEM_TYPE_OUTPUT: return "NN_WORK_ITEM_TYPE_OUTPUT";
+    case NN_WORK_ITEM_TYPE_VIEW: return "NN_WORK_ITEM_TYPE_VIEW";
+    case NN_WORK_ITEM_TYPE_LOCAL_CONNECTIVITY: return "NN_WORK_ITEM_TYPE_LOCAL_CONNECTIVITY";
+    case NN_WORK_ITEM_TYPE_CONVOLUTION: return "NN_WORK_ITEM_TYPE_CONVOLUTION";
+    case NN_WORK_ITEM_TYPE_FULLY_CONNECTED: return "NN_WORK_ITEM_TYPE_FULLY_CONNECTED";
+    case NN_WORK_ITEM_TYPE_POOLING: return "NN_WORK_ITEM_TYPE_POOLING";
+    case NN_WORK_ITEM_TYPE_NORMALIZATION: return "NN_WORK_ITEM_TYPE_NORMALIZATION";
+    case NN_WORK_ITEM_TYPE_SOFTMAX: return "NN_WORK_ITEM_TYPE_SOFTMAX";
+    case NN_WORK_ITEM_TYPE_MERGE: return "NN_WORK_ITEM_TYPE_MERGE";
+    case NN_WORK_ITEM_TYPE_ARITHMETIC: return "NN_WORK_ITEM_TYPE_ARITHMETIC";
+    case NN_WORK_ITEM_TYPE_RELU: return "NN_WORK_ITEM_TYPE_RELU";
+    case NN_WORK_ITEM_TYPE_RELU_1D: return "NN_WORK_ITEM_TYPE_RELU_1D";
+    case NN_WORK_ITEM_TYPE_RELU_3D: return "NN_WORK_ITEM_TYPE_RELU_3D";
+    case NN_WORK_ITEM_TYPE_SOFTMAX_LOSS: return "NN_WORK_ITEM_TYPE_SOFTMAX_LOSS";
+    case NN_WORK_ITEM_TYPE_SOFTMAX_LOSS_BACKPROP: return "NN_WORK_ITEM_TYPE_SOFTMAX_LOSS_BACKPROP";
+    case NN_WORK_ITEM_TYPE_AVERAGE_DELTAS: return "NN_WORK_ITEM_TYPE_AVERAGE_DELTAS";
+    case NN_WORK_ITEM_TYPE_DROPOUT: return "NN_WORK_ITEM_TYPE_DROPOUT";
+    case NN_WORK_ITEM_TYPE_DROPOUT_BACKPROP: return "NN_WORK_ITEM_TYPE_DROPOUT_BACKPROP";
+    case NN_WORK_ITEM_TYPE_LOSS_FUNCTION: return "NN_WORK_ITEM_TYPE_LOSS_FUNCTION";
+    case NN_WORK_ITEM_TYPE_UPDATE_ARGUMENTS: return "NN_WORK_ITEM_TYPE_UPDATE_ARGUMENTS";
+    case NN_WORK_ITEM_TYPE_RELU_BACKPROP: return "NN_WORK_ITEM_TYPE_RELU_BACKPROP";
+    case NN_WORK_ITEM_TYPE_CONVOLUTION_BACKPROP: return "NN_WORK_ITEM_TYPE_CONVOLUTION_BACKPROP";
+    case NN_WORK_ITEM_TYPE_FULLY_CONNECTED_BACKPROP: return "NN_WORK_ITEM_TYPE_FULLY_CONNECTED_BACKPROP";
+    case NN_WORK_ITEM_TYPE_POOLING_BACKPROP: return "NN_WORK_ITEM_TYPE_POOLING_BACKPROP";
+    case NN_WORK_ITEM_TYPE_NORMALIZATION_BACKPROP: return "NN_WORK_ITEM_TYPE_NORMALIZATION_BACKPROP";
+    case NN_WORK_ITEM_TYPE_SOFTMAX_BACKPROP: return "NN_WORK_ITEM_TYPE_SOFTMAX_BACKPROP";
+    case NN_WORK_ITEM_TYPE_RELU_1D_BACKPROP: return "NN_WORK_ITEM_TYPE_RELU_1D_BACKPROP";
+    case NN_WORK_ITEM_TYPE_RELU_3D_BACKPROP: return "NN_WORK_ITEM_TYPE_RELU_3D_BACKPROP";
+    case NN_WORK_ITEM_TYPE_CONVOLUTION_INT16_FIXEDPOINT: return "NN_WORK_ITEM_TYPE_CONVOLUTION_INT16_FIXEDPOINT";
+    case NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I16QN: return "NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I16QN";
+    case NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I32QN: return "NN_WORK_ITEM_TYPE_FULLY_CONNECTED_FORWARD_I16QN_I32QN";
+    case NN_WORK_ITEM_TYPE_SOFTMAX_FIXEDPOINT: return "NN_WORK_ITEM_TYPE_SOFTMAX_FIXEDPOINT";
+    case NN_WORK_ITEM_TYPE_CONVERT_FLOAT_TO_INT16_FIXEDPOINT: return "NN_WORK_ITEM_TYPE_CONVERT_FLOAT_TO_INT16_FIXEDPOINT";
+    case NN_WORK_ITEM_TYPE_MAX_POOLING_INT16_FIXEDPOINT: return "NN_WORK_ITEM_TYPE_MAX_POOLING_INT16_FIXEDPOINT";
+    case NN_WORK_ITEM_TYPE_NORMALIZATION_RESPONSE_ACROSS_MAPS_FORWARD_I16QN: return "NN_WORK_ITEM_TYPE_NORMALIZATION_RESPONSE_ACROSS_MAPS_FORWARD_I16QN";
+    case NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2: return "NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2";
+    case NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2_INT16_FIXEDPOINT: return "NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2_INT16_FIXEDPOINT";
+    case NN_WORK_ITEM_TYPE_CONVERT_DATA_LAYOUT: return "NN_WORK_ITEM_TYPE_CONVERT_DATA_LAYOUT";
+    default: return "unknown";
+    }
+}
+
+template <typename T_Flow>
+void nn_merge_layer_if_beneficial(
+    nn_workload_item_t* load_item,
+    T_Flow&             all_items)
+{
+    if (load_item->type != NN_WORK_ITEM_TYPE_ARITHMETIC) return;
+
+    std::vector<nn_workload_item_t*> used_by;
+    for (auto elem : all_items)
+        for (auto input_descr : elem.first->input)
+            if (input_descr.item == load_item)
+                used_by.push_back(elem.first);
+
+    if (used_by.size() != 1) return;
+    auto next_item = used_by.front();
+
+    if (next_item->type != NN_WORK_ITEM_TYPE_CONVOLUTION) return;
+
+    auto conv_primitive = dynamic_cast<layer::convolution_f32*>(next_item->primitive);
+    if (not conv_primitive) return;
+    if (not conv_primitive->uses_data_only()) return;
+
+    auto arith_primitive = dynamic_cast<layer::arithmetic_f32*>(load_item->primitive);
+    if (not arith_primitive) return;
+    if (not arith_primitive->is_linear()) return;
+
+    auto translated_params = arith_primitive->get_input_feat_periodic(
+        {load_item->parameters.begin(), load_item->parameters.end()});
+    
+    if (translated_params.empty()) return;
+
+    conv_primitive->update_bias_by_linear_factors(
+        translated_params,
+        {next_item->parameters.begin(), next_item->parameters.end()});
+
+    auto it = std::find_if(all_items.begin(), all_items.end(),
+        [&](decltype(all_items.front()) elem){ return elem.first == load_item; });
+    assert(it != all_items.end());
+
+    next_item->input = load_item->input;
+    all_items.erase(it);
+}
+
+} //namespace
 
 /* compile workflow into workload */
 NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0_function(
@@ -1438,152 +1989,190 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0_function(
     NN_WORKLOAD_DATA_TYPE  *input_format,   /* array containing formats of inputs */
     NN_WORKLOAD_DATA_TYPE  *output_format,  /* array containing formats of outputs */
     uint32_t                batch           /* batch size for compilation */
-    ) {
-    if(!workload || !device || !workflow)       return NN_API_STATUS_ERROR_INVALID_POINTER;
+    )
+{
+    if(!workload || !device || !workflow) return NN_API_STATUS_ERROR_INVALID_POINTER;
+
     for(auto index=0u; index<workflow->input_count; ++index)
         if(workflow->input[index] ->type!=NN_WORK_ITEM_TYPE_INPUT)
             return NN_API_STATUS_ERROR_INVALID_WORKFLOW; // TODO: more granular error code here
     for(auto index=0u; index<workflow->output_count; ++index)
         if(workflow->output[index]->type!=NN_WORK_ITEM_TYPE_OUTPUT)
             return NN_API_STATUS_ERROR_INVALID_WORKFLOW; // TODO: more granular error code here
-    try {
-        // allocate memory for workload (public & opaque parts & data buffers);
-        const size_t  input_size = sizeof(NN_WORKLOAD_DATA_TYPE)*workflow-> input_count;
-        const size_t output_size = sizeof(NN_WORKLOAD_DATA_TYPE)*workflow->output_count;
-        const size_t buffer_size = sizeof(nn_workload_t)+sizeof(nn_workload_opaque_t)+input_size+output_size;
-        uint8_t *buffer = new uint8_t[buffer_size];
-        // fill data structure
-        nn_workload_t          *workload_public = reinterpret_cast<nn_workload_t *>(buffer);
-        buffer += sizeof(nn_workload_t);
-        nn_workload_opaque_t   *workload_opaque = new(buffer) nn_workload_opaque_t; // placement new
-        buffer += sizeof(nn_workload_opaque_t);
-        *const_cast<nn_device_t **>(&workload_public->device) = device;
-        *const_cast<uint32_t *>(&workload_public->input_count)  = workflow->input_count;
-        *const_cast<uint32_t *>(&workload_public->output_count) = workflow->output_count;
-        *const_cast<NN_WORKLOAD_DATA_TYPE **>(&workload_public->input_format) = reinterpret_cast<NN_WORKLOAD_DATA_TYPE *>(buffer);
-        std::memcpy(workload_public->input_format, input_format, input_size);
-        buffer += sizeof(NN_WORKLOAD_DATA_TYPE)*workflow->input_count;
-        *const_cast<NN_WORKLOAD_DATA_TYPE **>(&workload_public->output_format) = (workflow->output_count) ? reinterpret_cast<NN_WORKLOAD_DATA_TYPE *>(buffer) : nullptr;
-        *const_cast<uint32_t *>(&workload_public->batch) = batch;
-        std::memcpy(workload_public->output_format, output_format, output_size);
+    try
+    {
+        nn_workload_t aux = {
+            device,
+            workflow->input_count,
+            workflow->output_count,
+            new NN_WORKLOAD_DATA_TYPE[workflow->input_count],
+            new NN_WORKLOAD_DATA_TYPE[workflow->output_count],
+            batch
+        };
+        auto workload_opaque = new nn_workload_opaque_t(aux);
+        std::copy(input_format, input_format + workflow->input_count, workload_opaque->input_format);
+        std::copy(output_format, output_format + workflow->output_count, workload_opaque->output_format);
 
-        // lookup for matching workflow items to workload items
-        std::map<nn_workflow_item_t *, nn_workload_item_t *> flow_to_work;
+        auto whole_flow = flow_items_in_execution_order(workflow);
+        std::vector<std::pair<nn_workload_item_t*, nn_workflow_item_t*>> flow_and_load;
+        std::transform(whole_flow.begin(), whole_flow.end(), std::back_inserter(flow_and_load),
+            [](nn_workflow_item_t* flow_item){
+                return std::make_pair(new nn_workload_item_t(), flow_item); });
 
-        {   // traverse workflow items and create workload items
-            std::queue<nn_workflow_item_t *> todo;
-            for(auto index = 0u; index<workflow->input_count; ++index)
-                todo.push(workflow->input[index]);
-            while(!todo.empty()) {
-                nn_workflow_item_t *flow_item = todo.front();
-                todo.pop();
-                if(flow_to_work.find(flow_item)==flow_to_work.end()) {
-                    flow_to_work[flow_item] = new nn_workload_item_t;
-                    for(auto index=0u; index<flow_item->use_count; ++index)
-                        todo.push(flow_item->use[index].item);
+        auto find_load_item = [&](nn_workflow_item_t* flow_item) -> nn_workload_item_t* {
+                auto it = std::find_if(flow_and_load.begin(), flow_and_load.end(),
+                    [&](decltype(flow_and_load.front()) elem){ return elem.second == flow_item; });
+                if (it == flow_and_load.end()) return nullptr;
+                return it->first;
+            };
+        for (auto& elem : flow_and_load)
+            nn_workflow_compile_0_function_copy_item(
+                elem.first,
+                elem.second,
+                workflow,
+                workload_opaque,
+                batch,
+                find_load_item,
+                reinterpret_cast<nn_device_internal*>(device));
+        
+        auto flow_and_load_merged = flow_and_load;
+        for (auto& elem : flow_and_load)
+            nn_merge_layer_if_beneficial(elem.first, flow_and_load_merged);
+
+        auto flow_and_load_with_conversions = flow_and_load_merged;
+        for (auto& elem : flow_and_load_merged)
+            nn_workflow_compile_add_batch_block_conversions(
+                elem.first, batch, flow_and_load_with_conversions, reinterpret_cast<nn_device_internal*>(device));
+
+        auto flow_and_load_with_all_conversions = flow_and_load_with_conversions;
+        for (auto& elem : flow_and_load_with_conversions)
+            nn_workflow_compile_0_function_add_conversions(
+                elem.first, elem.second, batch, input_format, output_format, flow_and_load_with_all_conversions);
+
+
+        for(auto index = 0u; index < workflow->input_count; ++index)
+            workload_opaque->input.push_back(find_load_item(workflow->input[index]));
+
+        for(auto index = 0u; index < workflow->output_count; ++index)
+            workload_opaque->output.push_back(find_load_item(workflow->output[index]));
+
+        std::transform(flow_and_load_with_all_conversions.begin(), flow_and_load_with_all_conversions.end(),
+                       std::back_inserter(workload_opaque->order_of_execution),
+                       [](std::pair<nn_workload_item_t*, nn_workflow_item_t*> elem){ return elem.first; });
+
+        // Now create param list.
+        for(auto item : workload_opaque->order_of_execution)
+        {
+            auto save_param = [item, &workload_opaque](uint32_t param_id)
+            {
+                workload_opaque->params.push_back(
+                    nn_workload_params
+                    {
+                        nullptr,
+                        item->type,
+                        (uint32_t)workload_opaque->param_sizes.back().size(),
+                        nullptr,
+                        item->parameters[param_id]
+                    });
+            };
+
+            switch(item->type)
+            {
+            case NN_WORK_ITEM_TYPE_CONVOLUTION:
+            {
+                // Create weight data.
+                workload_opaque->param_sizes.push_back(
+                {
+                    item->parameters[0]->parent->lengths.t[NN_DATA_COORD_x],
+                    item->parameters[0]->parent->lengths.t[NN_DATA_COORD_y],
+                    item->parameters[0]->parent->lengths.t[NN_DATA_COORD_z],
+                    item->parameters[0]->parent->lengths.t[NN_DATA_COORD_p] * item->parameters[0]->parent->lengths.t[NN_DATA_COORD_q]
+                });
+                workload_opaque->param_names.push_back(item->name + "_weights");
+                save_param(0);
+
+                // Create bias data.
+                workload_opaque->param_sizes.push_back(
+                {
+                    item->parameters[1]->parent->lengths.t[NN_DATA_COORD_x]
+                });
+                workload_opaque->param_names.push_back(item->name + "_biases");
+                save_param(1);
+
+                break;
+            }
+            case NN_WORK_ITEM_TYPE_FULLY_CONNECTED:
+            {
+                // Create weight data.
+                auto primitive = static_cast<layer::fully_connected_f32*>(item->primitive);
+
+                // Check if it had 3D or 1D input size.
+                if(primitive->get_has_3d_input())
+                {
+                    workload_opaque->param_sizes.push_back(
+                    {
+                        primitive->get_input_size_x(),
+                        primitive->get_input_size_y(),
+                        primitive->get_input_size_z(),
+                        primitive->get_output_size()
+                    });
                 }
+                else
+                {
+                    workload_opaque->param_sizes.push_back(
+                    {
+                        primitive->get_input_size(),
+                        primitive->get_output_size()
+                    });
+                }
+                workload_opaque->param_names.push_back(item->name + "_weights");
+                save_param(0);
+
+                // Create bias data.
+                workload_opaque->param_sizes.push_back(
+                {
+                    item->parameters[1]->parent->lengths.t[NN_DATA_COORD_x]
+                });
+                workload_opaque->param_names.push_back(item->name + "_biases");
+                save_param(1);
+                break;
+            }
+            default:
+                break;
             }
         }
 
-        { // now for every workflow item there's a workload item
-            std::set<nn_workflow_item_t *> done;
-            std::deque<nn_workflow_item_t *> todo;
-            for (auto index = 0u; index<workflow->input_count; ++index)
-                todo.push_front(workflow->input[index]);
-            while(!todo.empty()) {
-                nn_workflow_item_t *flow_item = todo.front();
-                if(done.find(flow_item)==done.end()) {   // Not yet marked.
-                    bool all_inputs_done = true;
-                    // Go through all inputs.
-                    for (auto index = 0u; index < flow_item->input_count; ++index) {
-                        if (done.find(flow_item->input[index].item) == done.end())
-                        {
-                            // Input not marked, add to todo.
-                            todo.push_front(flow_item->input[index].item);
-                            all_inputs_done = false;
-                        }
-                    }
-                    if (all_inputs_done) {
-                        // All inputs already marked - mark this item as well and remove from todo.
-                        // Also add all its uses to todo (if they arent there yet.)
-                        nn_workload_item_t *load_item = flow_to_work[flow_item];
-                        nn_workflow_compile_0_function_copy_item(load_item, flow_item, workflow, workload_public, batch, flow_to_work, reinterpret_cast<nn_device_internal*>(device));
-                        done.insert(flow_item);
-                        todo.pop_front();
-                        for (auto index = 0u; index < flow_item->use_count; ++index)
-                            if (std::find(std::begin(todo), std::end(todo), flow_item->use[index].item) == std::end(todo))
-                                todo.push_front(flow_item->use[index].item);
-                    }
-                }
-                else {
-                    // Marked, remove from todo list.
-                    todo.pop_front();
-                }
-            }
+        // Update pointers in C-like param structure.
+        uint32_t index = 0;
+        for(auto& param : workload_opaque->params)
+        {
+            param.name = workload_opaque->param_names[index].c_str();
+            param.sizes = workload_opaque->param_sizes[index].data();
+
+            ++index;
         }
 
-        { // add data layout conversions if required
-            std::queue<nn_workflow_item_t *> todo;
-            for (auto index = 0u; index < workflow->input_count; ++index)
-                todo.push(workflow->input[index]);
-            while (!todo.empty()) {
-                auto flow_item = todo.front();
-                auto load_item = flow_to_work[flow_item];
-                todo.pop();
-                nn_workflow_compile_0_function_add_conversions(load_item, flow_item, batch, input_format, output_format);
-                for (auto index = 0u; index < flow_item->use_count; ++index)
-                    todo.push(flow_item->use[index].item);
-            }
-        }
-
-        // copying inputs & outputs
-        workload_opaque->input.resize(workflow->input_count);
-        for(auto index=0u; index<workflow->input_count; ++index)
-            workload_opaque->input[index] = flow_to_work[workflow->input[index]];
-
-        workload_opaque->output.resize(workflow->output_count);
-        for(auto index=0u; index<workflow->output_count; ++index)
-            workload_opaque->output[index] = flow_to_work[workflow->output[index]];
-
-        { // creating workload items in order of execution
-            std::set<nn_workload_item_t *> done;
-            std::deque<nn_workload_item_t *> todo;
-            for (auto wrkl_input_item : workload_opaque->input)
-                todo.push_front(wrkl_input_item);
-            while(!todo.empty()) {
-                nn_workload_item_t *load_item = todo.front();
-                if(done.find(load_item)==done.end()) {   // Not yet marked.
-                    bool all_inputs_done = true;
-                    // Go through all inputs.
-                    for (auto input_item : load_item->input) {
-                        if (done.find(input_item.item) == done.end()) {
-                            // Input not marked, add to todo.
-                            todo.push_front(input_item.item);
-                            all_inputs_done = false;
-                        }
-                    }
-                    if (all_inputs_done) {
-                        // All inputs already marked - mark this item as well and remove from todo.
-                        // Also add all its uses to todo (if they arent there yet.)
-                        workload_opaque->order_of_execution.push_back(load_item);
-                        done.insert(load_item);
-                        todo.pop_front();
-                        for (auto use_item : load_item->use)
-                            if (std::find(std::begin(todo), std::end(todo), use_item.item) == std::end(todo))
-                                todo.push_front(use_item.item);
-                    }
-                }
-                else {
-                    // Marked, remove from todo list.
-                    todo.pop_front();
-                }
-            }
+        //call prepare_forward
+        for(auto item : workload_opaque->order_of_execution)
+        {
+            if (not item->primitive) continue;
+            std::vector<const nn_workload_data_t *> inputs;
+            for(auto& input_descriptor : item->input)
+                inputs.push_back(input_descriptor.get_data_view());
+            std::vector<const nn_workload_data_t *> params(item->parameters.begin(), item->parameters.end());
+            item->primitive->prepare_forward(inputs, params, item->output);
         }
 
         // set result
-        *workload = workload_public;
+        *workload = workload_opaque;
     }
-    catch (...) {
+    catch( std::exception &e )
+    {
+        std::cerr << e.what();
+        throw;
+    }
+    catch (...)
+    {
         return NN_API_STATUS_ERROR_OUT_OF_MEMORY;
     }
 
@@ -1597,11 +2186,13 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0_function(
     void *             *output,         /* array of pointers with output data; format is in workload->output_format */
     NN_API_STATUS      *status          /* asynchronous status */
     ) {
-    if (!workload_public || !input || (!output && workload_public->output_count) ) return NN_API_STATUS_ERROR_INVALID_POINTER;
+
+    if (!workload_public || !input || (!output && workload_public->output_count))
+        return NN_API_STATUS_ERROR_INVALID_POINTER;
     else {
         try {
             *status = NN_API_WORK_IN_PROGRESS;
-            nn_workload_opaque_t *workload_opaque = reinterpret_cast<nn_workload_opaque_t *>(workload_public + 1);
+            auto workload_opaque = static_cast<nn_workload_opaque_t *>(workload_public);
 #if  ENABLE_WORKLOAD_MONITORING
             uint16_t  item_count=0;
 #endif // ENABLE_WORKLOAD_MONITORING
@@ -1616,20 +2207,92 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0_function(
                     // Copy input.
                     auto item_input = reinterpret_cast<nn_data_t*>(input[item->arguments.input.index]);
 
-                    // TODO validate if input have same lengths and layout as one given during compilation.
-                    item->output[0]->parent->data_buffer = item_input->buffer;
+                    // If you want inputs to be copied don't assign them to output (buffers will override each other)
+                    // This situation take place only when merge is next layer after inputs
+                    if( !item->arguments.input.copy_on_merge ) {
+                        // If after input there isn't merge, do standard way
+                        item->output[0]->parent->data_buffer = item_input->buffer;  // TODO validate if input have same lengths and layout as one given during compilation.
+                    }
                     break;
                 }
                 case NN_WORK_ITEM_TYPE_OUTPUT: {
                     // Copy result to workload output.
                     auto item_output = reinterpret_cast<nn_data_t*>(output[item->arguments.output.index]);
 
-                    // TODO validate if output have same lengths and layout as one given during compilation.
                     item->output[0]->parent->data_buffer = item_output->buffer;
                     nn_workload_data_copy(item->output[0], item->input[0].get_data_view());
                     break;
                 }
-                case NN_WORK_ITEM_TYPE_MERGE:
+                case NN_WORK_ITEM_TYPE_MERGE: {
+                    uint32_t z_offset = 0;
+
+                    for( uint32_t i = 0; i < item->input.size() ; ++i ) {
+                        if( NN_WORK_ITEM_TYPE_INPUT == item->input[i].item->type
+                        && item->input[i].item->arguments.input.copy_on_merge
+                        ) {
+
+                            // get input buffer from inputs table
+                            auto item_input = reinterpret_cast< nn_data_t* >(input[item->input[i].item->arguments.input.index]);
+
+                            auto dim = item_input->dimension;
+                            assert( 4 == dim );
+                            auto size_ptr = item_input->size;
+                            uint32_t input_buf_x  = static_cast<uint32_t>( *(size_ptr + 1)),
+                                     input_buf_y  = static_cast<uint32_t>( *(size_ptr + 2)),
+                                     input_buf_z  = static_cast<uint32_t>( *(size_ptr + 0)),
+                                     input_buf_n  = static_cast<uint32_t>( *(size_ptr + 3));
+
+                            auto destination = item->output[0];
+                            auto source = item->input[i].item->output[0];
+
+                            unsigned int source_sizes      [NN_DATA_COORD_MAX + 1],
+                                         destination_sizes [NN_DATA_COORD_MAX + 1];
+
+                            for( int i = 0 ; i < NN_DATA_COORD_MAX+1 ; ++i){
+                                source_sizes[i]      = source->view_end.t[i]      - source->view_begin.t[i]      + 1;
+                                destination_sizes[i] = destination->view_end.t[i] - destination->view_begin.t[i] + 1;
+                            }
+
+                            // check if destination size is >= for z merge
+                            assert(    destination_sizes[NN_DATA_COORD_n] == source_sizes[NN_DATA_COORD_n]
+                                    && destination_sizes[NN_DATA_COORD_x] == source_sizes[NN_DATA_COORD_x]
+                                    && destination_sizes[NN_DATA_COORD_y] == source_sizes[NN_DATA_COORD_y]
+                                    && destination_sizes[NN_DATA_COORD_z] >= source_sizes[NN_DATA_COORD_z]
+                                    && destination_sizes[NN_DATA_COORD_p] == source_sizes[NN_DATA_COORD_p]
+                                    && destination_sizes[NN_DATA_COORD_q] == source_sizes[NN_DATA_COORD_q] );
+
+                            // check if z is not out of bounds
+                            assert( destination->view_end.t[NN_DATA_COORD_z] + 1 >= source_sizes[NN_DATA_COORD_z] + z_offset );
+
+                            // check if input_buffer's sizes are equal to source_sizes
+                            assert(    input_buf_z == source_sizes[NN_DATA_COORD_z]
+                                    && input_buf_x == source_sizes[NN_DATA_COORD_x]
+                                    && input_buf_y == source_sizes[NN_DATA_COORD_y]
+                                    && input_buf_n == source_sizes[NN_DATA_COORD_n] );
+
+                            auto input_buf = static_cast< float* >(item_input->buffer);
+
+                            for( uint32_t p = 0; p < source_sizes[NN_DATA_COORD_p]; p++ )
+                            for( uint32_t q = 0; q < source_sizes[NN_DATA_COORD_q]; q++ )
+                            for( uint32_t n = 0; n < source_sizes[NN_DATA_COORD_n]; n++ )
+                            for( uint32_t z = 0; z < source_sizes[NN_DATA_COORD_z]; z++ )
+                            for( uint32_t y = 0; y < source_sizes[NN_DATA_COORD_y]; y++ )
+                            for( uint32_t x = 0; x < source_sizes[NN_DATA_COORD_x]; x++ ) {
+                                auto tmp = input_buf[ z +
+                                                        source_sizes[NN_DATA_COORD_z] * x +
+                                                        source_sizes[NN_DATA_COORD_z] * source_sizes[NN_DATA_COORD_x] * y +
+                                                        source_sizes[NN_DATA_COORD_z] * source_sizes[NN_DATA_COORD_x] * source_sizes[NN_DATA_COORD_y] * n +
+                                                        source_sizes[NN_DATA_COORD_z] * source_sizes[NN_DATA_COORD_x] * source_sizes[NN_DATA_COORD_y] * source_sizes[NN_DATA_COORD_n] * p +
+                                                        source_sizes[NN_DATA_COORD_z] * source_sizes[NN_DATA_COORD_x] * source_sizes[NN_DATA_COORD_y] * source_sizes[NN_DATA_COORD_n] * source_sizes[NN_DATA_COORD_p] * q ];
+
+                                nn_workload_data_get<float>( destination, n, x, y, z + z_offset, p, q ) = tmp;
+                            }
+
+                            z_offset += source_sizes[NN_DATA_COORD_z];
+                          }
+                    }
+                    break;
+                }
                 case NN_WORK_ITEM_TYPE_VIEW: {
                     // Nothing to do here - it's just limiting access to input by attaching view to it.
                     break;
@@ -1654,6 +2317,10 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0_function(
                     layer::wrapper_softmax_work_item_backward(item);
                     break;
                 }
+                case NN_WORK_ITEM_TYPE_SOFTMAX_LOSS_BACKPROP: {
+                    layer::run_softmax_loss_backward(item);
+                    break;
+                }
                 case NN_WORK_ITEM_TYPE_RELU_1D_BACKPROP:
                 case NN_WORK_ITEM_TYPE_RELU_3D_BACKPROP:
                 {
@@ -1665,7 +2332,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0_function(
                     break;
                 }
                 case NN_WORK_ITEM_TYPE_UPDATE_ARGUMENTS: {
-                    layer::run_parameter_update(item);
+                    layer::run_parameter_update(item, static_cast<nn_device_internal*>(workload_public->device));
                     break;
                 }
                 case NN_WORK_ITEM_TYPE_DROPOUT: {
@@ -1728,18 +2395,18 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0_function(
                 nn_workload_item_data_marshaling(item, ++item_count);
 #endif // ENABLE_WORKLOAD_MONITORING
             }
-
-            // unset input and output buffer
-            for (auto item : workload_opaque->order_of_execution)
-            {
-                if (item->type == NN_WORK_ITEM_TYPE_INPUT || item->type == NN_WORK_ITEM_TYPE_OUTPUT)
-                    item->output[0]->parent->data_buffer = nullptr;
-            }
         }
-        catch(NN_API_STATUS status) {
+        catch(NN_API_STATUS status)
+        {
             return status;
         }
-        catch(...) {
+        catch( std::exception &e )
+        {
+            std::cerr << e.what();
+            throw;
+        }
+        catch(...)
+        {
             return NN_API_STATUS_ERROR_OUT_OF_MEMORY;
         }
     }
@@ -1747,14 +2414,16 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0_function(
 }
 
 #if ENABLE_WORKLOAD_PROFILING
-void nn_workload_print_profiling_data(nn_workload_opaque_t* workload_opaque){
+void nn_workload_print_profiling_data(nn_workload_opaque_t* workload_opaque)
+{
     printf("\n------------profiling--------------\n");
     printf("%20s %20s %10s %10s\n", "layer_type", "layer_name", "cycles", "");
     printf("%20s %20s %10s %10s\n", "", "", "minimum", "average");
 
     assert(workload_opaque->order_of_execution.size() != 0); // Empty workload (?).
 
-    for (const auto &item : workload_opaque->order_of_execution) {
+    for (const auto &item : workload_opaque->order_of_execution)
+    {
         const auto &times = workload_opaque->profiling_data.work_item_cycles[item];
 
         if(times.size() == 0)
@@ -1799,6 +2468,8 @@ void nn_workload_print_profiling_data(nn_workload_opaque_t* workload_opaque){
             case NN_WORK_ITEM_TYPE_POOLING_BACKPROP: return "pool_back";
             case NN_WORK_ITEM_TYPE_NORMALIZATION_BACKPROP: return "norm_back";
             case NN_WORK_ITEM_TYPE_SOFTMAX_BACKPROP: return "softmax_back";
+            case NN_WORK_ITEM_TYPE_SOFTMAX_LOSS: return "softmax_loss";
+            case NN_WORK_ITEM_TYPE_SOFTMAX_LOSS_BACKPROP: return "softmax_loss_backprop";
             default: return "no_name";
             }
         };
@@ -1810,7 +2481,6 @@ void nn_workload_print_profiling_data(nn_workload_opaque_t* workload_opaque){
 #endif
 
 
-
 /* delete workload */
 NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_delete_0_function(
     nn_workload_t       *workload_public       /* workload to be deleted */
@@ -1818,30 +2488,40 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_delete_0_function(
     if(!workload_public) return NN_API_STATUS_ERROR_INVALID_POINTER;
     else {
         try {
-            uint8_t *buffer = reinterpret_cast<uint8_t *>(workload_public);
-            nn_workload_opaque_t *workload_opaque = reinterpret_cast<nn_workload_opaque_t *>(buffer + sizeof(nn_workload_t));
+            auto workload_opaque = static_cast<nn_workload_opaque_t*>(workload_public);
 
 #if ENABLE_WORKLOAD_PROFILING
             nn_workload_print_profiling_data(workload_opaque);
 #endif
 
-            std::stack<nn_workload_item_t *> todo;
-            std::set<nn_workload_item_t *> done;
-            for(auto element : workload_opaque->input) todo.push(element);
-            while(!todo.empty()) {
-                nn_workload_item_t *load_item = todo.top();
-                todo.pop();
-                if(done.find(load_item)==done.end()) {
-                    done.insert(load_item);
-                    for(auto element : load_item->use) todo.push(element.item);
-                    for(auto parameter : load_item->parameters)
-                        delete parameter;
-                    load_item->parameters.clear();
-                    delete load_item;
+            for (auto& item : workload_opaque->order_of_execution)
+            {
+                for(auto& parameter : item->parameters)
+                {
+                    delete parameter;
+                    parameter = nullptr;
                 }
+
+                for(auto& output : item->output)
+                {
+                    delete output;
+                    output = nullptr;
+                }
+
+                delete item->primitive;
+                item->primitive = nullptr;
+
+                delete item;
+                item = nullptr;
             }
-            workload_opaque->~nn_workload_opaque_t(); // placement delete
-            delete[] buffer;
+
+            delete workload_opaque->input_format;
+            delete workload_opaque->output_format;
+            delete workload_opaque;
+        }
+        catch( std::exception &e ) {
+            std::cerr << e.what();
+            throw;
         }
         catch(...) {
             return NN_API_STATUS_ERROR_OUT_OF_MEMORY;
@@ -1891,3 +2571,152 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_device_parameter_set_0_function(
     ) {
     return NN_API_STATUS_ERROR_OTHER;
 }
+
+/* returns list of parameters found in workload along with their sizes */
+NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_query_param_0_function(
+    nn_workload_t          *workload_public, /* workload to be queried */
+    nn_workload_params    **params,          /* returns list of parameters found in workload along with their sizes */
+    uint32_t               *num_params       /* number of params returned */
+    )
+{
+    nn_workload_opaque_t *workload_opaque = static_cast<nn_workload_opaque_t *>(workload_public);
+    *params = &workload_opaque->params[0];
+    *num_params = static_cast<uint32_t>(workload_opaque->params.size());
+
+    return NN_API_STATUS_OK;
+}
+
+NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_recover_param_0_function(
+    nn_workload_t          *workload_public,  /* workload to be queried */
+    char                   *param_name,       /* name of parameter to recover */
+    nn_data                *data              /* data will be returned to this pointer */
+    )
+{
+    auto workload_opaque = static_cast<nn_workload_opaque_t*>(workload_public);
+    auto& data_wrapper = *static_cast<nn::data<float>*>(data);
+
+    try
+    {
+        for(auto& param : workload_opaque->params)
+        {
+            if(strcmp(param_name,param.name) == 0)
+            {   // Found item in table.
+                std::string name(param.name);
+                auto& internal_data_wrapper = *static_cast<nn::workload_data<nn::layout_f32>*>(param.handler);
+                auto& internal_lengths = internal_data_wrapper.parent->lengths.t;
+
+                if(name.find("_weights")!=std::string::npos)
+                {   // Weights.
+                    if(param.type == NN_WORK_ITEM_TYPE_CONVOLUTION)
+                    {   // Convolution sliced weights.
+                        auto slice_size = internal_lengths[NN_DATA_COORD_p];
+
+                        for(uint32_t x = 0; x < data_wrapper.size[0]; ++x)
+                            for(uint32_t y = 0; y < data_wrapper.size[1]; ++y)
+                                for(uint32_t z = 0; z < data_wrapper.size[2]; ++z)
+                                    for(uint32_t o = 0; o < data_wrapper.size[3]; ++o)
+                                        data_wrapper(x, y, z, o) = internal_data_wrapper(0, x, y, z, o%slice_size, o/slice_size);
+                    }
+                    else if(param.type == NN_WORK_ITEM_TYPE_FULLY_CONNECTED)
+                    {   // Fully connected.
+                        if(param.dimensions == 2)
+                        {   // 1D.
+                            if(workload_public->batch != 1)
+                            {   // Sliced weights.
+                                auto slice_size = internal_lengths[NN_DATA_COORD_p];
+
+                                for(uint32_t x = 0; x < data_wrapper.size[0]; ++x)
+                                    for(uint32_t y = 0; y < data_wrapper.size[1]; ++y)
+                                        data_wrapper(x, y) = internal_data_wrapper(0, x, 0, 0, y%slice_size, y/slice_size);
+
+                            }
+                            else
+                            {   // Non-sliced weights. Batch 1.
+                                for(uint32_t x = 0; x < data_wrapper.size[0]; ++x)
+                                    for(uint32_t y = 0; y < data_wrapper.size[1]; ++y)
+                                        data_wrapper(x, y) = internal_data_wrapper(0, x, y, 0, 0, 0);
+                            }
+                        }
+                        else if(param.dimensions == 4)
+                        {   // 3D.
+                            if(workload_public->batch != 1)
+                            {   // Sliced weights.
+                                auto slice_size = internal_lengths[NN_DATA_COORD_p];
+
+                                // Create 3d view.
+                                nn::workload_data<nn::layout_f32> internal_data_wrapper_3d_view(
+                                    internal_data_wrapper.parent->data_buffer,
+                                    {
+                                        internal_lengths[NN_DATA_COORD_n],
+                                        (uint32_t)data_wrapper.size[0],
+                                        (uint32_t)data_wrapper.size[1],
+                                        (uint32_t)data_wrapper.size[2],
+                                        internal_lengths[NN_DATA_COORD_p],
+                                        internal_lengths[NN_DATA_COORD_q]
+                                    },
+                                    nn::layout_t<nn::layout_pzxyqn_f32>::layout); // P-ZXY-Q -> P-I-Q
+
+                                for(uint32_t x = 0; x < data_wrapper.size[0]; ++x)
+                                    for(uint32_t y = 0; y < data_wrapper.size[1]; ++y)
+                                        for(uint32_t z = 0; z < data_wrapper.size[2]; ++z)
+                                            for(uint32_t o = 0; o < data_wrapper.size[3]; ++o)
+                                                data_wrapper(x, y, z, o) = internal_data_wrapper_3d_view(0, x, y, z, o%slice_size, o/slice_size);
+                            }
+                            else
+                            {   // Non-sliced weights. Batch 1.
+
+                                // Create 3d view.
+                                nn::workload_data<nn::layout_f32> internal_data_wrapper_3d_view(
+                                    internal_data_wrapper.parent->data_buffer,
+                                    {
+                                        internal_lengths[NN_DATA_COORD_n],
+                                        (uint32_t)data_wrapper.size[0],
+                                        (uint32_t)data_wrapper.size[1],
+                                        (uint32_t)data_wrapper.size[2],
+                                        (uint32_t)data_wrapper.size[3],
+                                        internal_lengths[NN_DATA_COORD_q]
+                                    },
+                                    nn::layout_t<nn::layout_pzxyqn_f32>::layout); // O-ZXY -> O-I
+
+                                for(uint32_t x = 0; x < data_wrapper.size[0]; ++x)
+                                    for(uint32_t y = 0; y < data_wrapper.size[1]; ++y)
+                                        for(uint32_t z = 0; z < data_wrapper.size[2]; ++z)
+                                            for(uint32_t o = 0; o < data_wrapper.size[3]; ++o)
+                                                data_wrapper(x, y, z, o) = internal_data_wrapper_3d_view(0, x, y, z, o, 0);
+                            }
+                        }
+                    }
+                    else
+                        throw std::invalid_argument("recover_param: unknown format");
+                }
+                else if(name.find("_biases")!=std::string::npos)
+                {   // Biases.
+                    if(internal_data_wrapper.parent->layout == nn::layout_t<nn::layout_nxyzpq_f32>::layout && param.dimensions == 1)
+                    {
+                        for(uint32_t x = 0; x < internal_lengths[NN_DATA_COORD_x]; ++x)
+                            data_wrapper(x) = internal_data_wrapper(0, x, 0, 0, 0, 0);
+                    }
+                    else
+                        throw std::invalid_argument("recover_param: unknown format");
+                }
+                else
+                    throw std::invalid_argument("recover_param: unknown format");
+
+                break;
+            }
+        }
+    }
+    catch(...)
+    {
+        return NN_API_STATUS_ERROR_STATUS_CODE_NOT_FOUND;
+    }
+
+    return NN_API_STATUS_OK;
+}
+
+NN_API_STATUS NN_API_CALL_CONVENTION nn_set_use_jit_primitives_0_function(int flag)
+{
+    nn::use_asmjit_primitives = (flag == 1);
+    return NN_API_STATUS_OK;
+}
+

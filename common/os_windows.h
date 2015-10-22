@@ -27,95 +27,44 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
+#ifdef WIN32
+
+#include <string>
 #include <io.h>
-#include <windows.h>
 #include <regex>
-#include <iomanip>
-#include <chrono>
-#include <sstream>
 
-namespace {
-    // dlopen, dlclose, dlsym
-    const int RTLD_LAZY = 0;
-    void *dlopen(const char *filename,int) {
-        return LoadLibraryA(filename);
-    }
-    int dlclose(void *handle) {
-        return FreeLibrary(static_cast<HINSTANCE>(handle))==0 ? 1 : 0;
-    }
-    void *dlsym(void *handle,const char *symbol) {
-        return GetProcAddress(static_cast<HINSTANCE>(handle),symbol);
-    }
+// dlopen, dlclose, dlsym, dlerror
+const int RTLD_LAZY = 0;
 
-    // opendir, closedir, readdir
-    const int DT_UNKNOWN = 0;
-    const int DT_REG = 8;
+// opendir, closedir, readdir
+const int DT_UNKNOWN = 0;
+const int DT_REG = 8;
 
-    struct dirent {
-        char           *d_name;
-        unsigned char   d_type;
-        std::string     str_d_name;
-    };
+extern const std::string show_HTML_command;
+extern const std::string dynamic_library_extension;
 
-    struct DIR {
-        intptr_t        handle;
-        _finddata_t     fileinfo;
-        dirent          result;
-        std::string     name;
-    };
+void *dlopen(const char *filename,int);
+int dlclose(void *handle);
+void *dlsym(void *handle, const char *symbol);
+char *dlerror(void);
 
-    DIR *opendir(const char *name)
-    {
-        if(!name || !*name) return nullptr;
-        else {
-            DIR *dir = new DIR;
-            dir->name = name;
-            dir->name += dir->name.back()=='/' || dir->name .back()=='\\' ? "*" : "/*";
-            if(-1==(dir->handle = _findfirst(dir->name.c_str(),&dir->fileinfo))) {
-                delete dir;
-                dir = nullptr;
-            }
-            else dir->result.d_name = nullptr;
-            return dir;
-        }
-    }
+struct dirent {
+    char           *d_name;
+    unsigned char   d_type;
+    std::string     str_d_name;
+};
 
-    int closedir(DIR *dir) {
-        if(!dir) return -1;
-        else {
-            intptr_t handle = dir->handle;
-            delete dir;
-            return -1==handle ? -1 : _findclose(handle);
-        }
-    }
+struct DIR {
+    intptr_t        handle;
+    _finddata_t     fileinfo;
+    dirent          result;
+    std::string     name;
+};
 
-    dirent *readdir(DIR *dir) {
-        if(!dir || -1==dir->handle) return nullptr;
-        else {
-            if(dir->result.d_name && -1==_findnext(dir->handle,&dir->fileinfo)) return nullptr;
-            else {
-                dirent *result = &dir->result;
-                result->d_name = dir->fileinfo.name;
-                result->d_type = dir->fileinfo.attrib & (_A_ARCH|_A_NORMAL|_A_RDONLY) ? DT_REG : DT_UNKNOWN;
-                return result;
-            }
-        }
-    }
+DIR *opendir(const char *name);
+int closedir(DIR *dir);
+dirent *readdir(DIR *dir);
+bool is_regular_file(std::string& dirname, struct dirent* folder_entry);
+std::string get_timestamp();
 
-    bool is_regular_file(std::string& dirname,struct dirent* folder_entry) {
-        return folder_entry->d_type == DT_REG;
-    }
-
-    std::string get_timestamp() {
-        std::stringstream timestamp;
-        auto now = std::chrono::system_clock::now();
-        auto in_time_t = std::chrono::system_clock::to_time_t(now);
-        struct tm _tm;
-        localtime_s(&_tm,&in_time_t);
-        timestamp<<std::put_time(&_tm,"%Y%m%d%H%M%S");
-        return timestamp.str();
-    }
-
-    const std::string show_HTML_command("START ");
-    const std::string dynamic_library_extension(".dll");
-}
+#endif //windows

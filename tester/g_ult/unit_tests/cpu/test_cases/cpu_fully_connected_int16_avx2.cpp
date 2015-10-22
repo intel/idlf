@@ -26,12 +26,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "tester/g_ult/unit_tests/cpu/naive_implementations.h"
+#include <gtest/gtest.h>
 
 const uint32_t C_simd_width = sizeof(__m256)/sizeof(int32_t);
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-// Helper classess and functions.
+// Helper classes and functions.
 
 static void ult_nn_fc_initialize_work_item(
     nn_workload_item* &work_item,
@@ -46,11 +47,11 @@ static void ult_nn_fc_initialize_work_item(
     NN_ACTIVATION_FUNCTION activation)
 {
 
-    nn_workload_data_layout_t in_layout = nn::workload_data<int16_t>::layout.xzynpq;
+    nn_workload_data_layout_t in_layout = nn::layout_t<nn::layout_xzynpq_i16>::layout;
 
-    nn_workload_data_layout_t out_layout = nn::workload_data<int32_t>::layout.xzynpq;
+    nn_workload_data_layout_t out_layout = nn::layout_t<nn::layout_xzynpq_i32>::layout;
 
-    nn_workload_data_layout_t weight_layout = nn::workload_data<int16_t>::layout.xzynpq;
+    nn_workload_data_layout_t weight_layout = nn::layout_t<nn::layout_xzynpq_i16>::layout;
 
     nn_workload_data_coords_t input_coords = 
     { 
@@ -98,7 +99,8 @@ static void ult_nn_fc_initialize_work_item(
 
     work_item = new nn_workload_item();
     work_item->type = NN_WORK_ITEM_TYPE_FULLY_CONNECTED;
-    
+    work_item->primitive = nullptr;
+
     auto &arguments = work_item->arguments.fully_connected_forward_i16qn_i16qn;
     arguments.activation.basic_arguments.function = activation;
     work_item->output.push_back(output_data);
@@ -111,6 +113,7 @@ static void ult_nn_fc_initialize_work_item(
 
     input_item = new nn_workload_item();
     input_item->type = NN_WORK_ITEM_TYPE_INPUT;
+    input_item->primitive = nullptr;
 
     nn::workload_data<int16_t> *input_data = new nn::workload_data<int16_t>(input_coords, in_layout);
     memcpy(input_data->parent->data_buffer, input, input_data->parent->buffer_size);
@@ -140,11 +143,11 @@ static void ult_nn_fc_initialize_work_items(
     uint32_t kernel_stride_y,
     NN_ACTIVATION_FUNCTION activation )
 {
-    nn_workload_data_layout_t inp_layout = nn::workload_data<int16_t>::layout.zpxynq;
+    nn_workload_data_layout_t inp_layout = nn::layout_t<nn::layout_zpxynq_i16>::layout;
 
-    nn_workload_data_layout_t out_layout = nn::workload_data<int32_t>::layout.zpxynq;
+    nn_workload_data_layout_t out_layout = nn::layout_t<nn::layout_zpxynq_i32>::layout;
 
-    nn_workload_data_layout_t weight_layout = nn::workload_data<int16_t>::layout.pzqxyn;
+    nn_workload_data_layout_t weight_layout = nn::layout_t<nn::layout_pzqxyn_i16>::layout;
 
     nn_workload_data_coords_t input_coords =
     {
@@ -197,9 +200,11 @@ static void ult_nn_fc_initialize_work_items(
 
     work_item = new nn_workload_item();
     work_item->type = NN_WORK_ITEM_TYPE_FULLY_CONNECTED;
+    work_item->primitive = nullptr;
 
     input_item = new nn_workload_item();
     input_item->type = NN_WORK_ITEM_TYPE_INPUT;
+    input_item->primitive = nullptr;
 
     memcpy(input_data->parent->data_buffer, input, input_data->parent->buffer_size);
     input_item->output.push_back(input_data);
@@ -210,17 +215,19 @@ static void ult_nn_fc_initialize_work_items(
 //////////////////////////////////////////////////////////////////////////////////////////////////
 static void ult_nn_fc_deinitialize_work_item(nn_workload_item* &work_item)
 {
-    if (work_item->type == NN_WORK_ITEM_TYPE_FULLY_CONNECTED)
+    for(auto& parameter : work_item->parameters)
     {
-        delete work_item->parameters[0];
-        delete work_item->parameters[1];
+        delete parameter;
+        parameter = nullptr;
     }
 
-    work_item->input.clear();
-    delete work_item->output[0];
+    for(auto& output : work_item->output)
+    {
+        delete output;
+        output = nullptr;
+    }
 
     delete work_item;
-
     work_item = nullptr;
 }
 
@@ -587,6 +594,7 @@ bool ult_fc_perform_test(
 
     // Cleanup.
     ult_nn_fc_deinitialize_work_item(work_item);
+    ult_nn_fc_deinitialize_work_item(input_item);
 
     if (check_out_views)
     {

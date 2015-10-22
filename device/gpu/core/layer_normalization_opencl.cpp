@@ -40,7 +40,7 @@ namespace device_gpu
 {
 //TODO: Change layout of data so feature maps corressponding pixels are located subsequenetialy
 //TODO: make normalization_opt kernel more optimal. Currently it is slower than naive one. nvestigate that
-    
+
 const char* normalization = STRINGIFY(
 //Input dimensions, normalization area size passed via compiler definition
 //build options: -DLWS -DNUM_INPUT_FEATURE_MAPS -DNORMALIZATION_SIZE -DALPHA -DBETA -DK
@@ -48,27 +48,27 @@ __kernel void normalization(__global float* output,  __global const float* input
 {
 
     unsigned int delta_offset  = get_global_size(1)*get_global_size(0);
-    unsigned int i_read_index  = get_global_id(2) * (NUM_INPUT_FEATURE_MAPS*delta_offset) + get_global_id(1)*get_global_size(0) + get_global_id(0);    
-    unsigned int j_offset      = get_global_id(2) * (NUM_INPUT_FEATURE_MAPS*delta_offset) + get_global_id(1)*get_global_size(0) + get_global_id(0);    
+    unsigned int i_read_index  = get_global_id(2) * (NUM_INPUT_FEATURE_MAPS*delta_offset) + get_global_id(1)*get_global_size(0) + get_global_id(0);
+    unsigned int j_offset      = get_global_id(2) * (NUM_INPUT_FEATURE_MAPS*delta_offset) + get_global_id(1)*get_global_size(0) + get_global_id(0);
 
     unsigned int delta_write_offset = (get_global_size(1) + ohpad) * (get_global_size(0) + owpad);
     unsigned int i_write_index = out_buff_offset + get_global_id( 2 ) * NUM_INPUT_FEATURE_MAPS* delta_write_offset + get_global_id( 1 )*( get_global_size( 0 ) + owpad ) + get_global_id( 0 );
 
 
     //in case we know only 1 batch will be used , use below functions
-    //unsigned int i_write_index =  get_global_id(1)*get_global_size(0) + get_global_id(0);    
-    //unsigned int j_offset      =  get_global_id(1)*get_global_size(0) + get_global_id(0);    
+    //unsigned int i_write_index =  get_global_id(1)*get_global_size(0) + get_global_id(0);
+    //unsigned int j_offset      =  get_global_id(1)*get_global_size(0) + get_global_id(0);
 
-    float sum = 0.0f;    
+    float sum = 0.0f;
     float powsum = 0.0f;
-    float val = 0.0f;    
+    float val = 0.0f;
     uint j;
     //gather Sum of first elements, that is needed to compute element 0
     for( j = 0 ; j <= NORMALIZATION_SIZE/2 ; j++ )
-    {   
-        val = input[j_offset];    
-        sum += val*val;     
-        j_offset += delta_offset;    
+    {
+        val = input[j_offset];
+        sum += val*val;
+        j_offset += delta_offset;
     }
     //element 0
     powsum = pow((float)K + ALPHA*sum,BETA);
@@ -76,11 +76,11 @@ __kernel void normalization(__global float* output,  __global const float* input
 
     for( ; j < NORMALIZATION_SIZE; j++ )
     {
-        val            = input[j_offset];    
-        sum           += val*val;     
+        val            = input[j_offset];
+        sum           += val*val;
         i_write_index += delta_write_offset;
         i_read_index  += delta_offset;
-        j_offset      += delta_offset;    
+        j_offset      += delta_offset;
         //using this sum, compute value for those elements
         powsum = pow((float)K + ALPHA*sum,BETA);
         output[i_write_index] = ( input[i_read_index] ) / powsum;
@@ -90,13 +90,13 @@ __kernel void normalization(__global float* output,  __global const float* input
     //in which we add new element at the end and we remove first element from the beginning which is NORMALIZATION_SIZE away.
     for( j = NORMALIZATION_SIZE - NORMALIZATION_SIZE/2 ; j < NUM_INPUT_FEATURE_MAPS - NORMALIZATION_SIZE/2 ; j++ )
     {
-        val            = input[j_offset];    
-        sum           += val*val;     
+        val            = input[j_offset];
+        sum           += val*val;
         val            = input[ j_offset - NORMALIZATION_SIZE  * delta_offset];
-        sum           -= val*val;  
+        sum           -= val*val;
         i_write_index += delta_write_offset;
         i_read_index  += delta_offset;
-        j_offset      += delta_offset;    
+        j_offset      += delta_offset;
         //now update the value using current sum value
         powsum = pow((float)K + ALPHA*sum,BETA);
         output[i_write_index] = ( input[i_read_index] ) / powsum;
@@ -106,10 +106,10 @@ __kernel void normalization(__global float* output,  __global const float* input
     for( ; j < NUM_INPUT_FEATURE_MAPS ; j++ )
     {
         val            = input[ j_offset - NORMALIZATION_SIZE  * delta_offset];
-        sum           -= val*val;  
+        sum           -= val*val;
         i_write_index += delta_write_offset;
         i_read_index  += delta_offset;
-        j_offset      += delta_offset;    
+        j_offset      += delta_offset;
         //compute values for last elements
         powsum = pow((float)K + ALPHA*sum,BETA);
         output[i_write_index] = ( input[i_read_index] ) / powsum;
@@ -323,7 +323,7 @@ void ocl_toolkit::normalize( nn_cl_data                 *output,
     // and pointer to it is passed to as data to callback mechanism
     // after using callback function will free dynamic allocation
     exec_struct *psc = new exec_struct;
-    psc->name ="normalization" ; 
+    psc->name ="normalization" ;
     psc->num_fmads = 0; //No theretical value yet
     psc->time_event = new cl::Event;
 

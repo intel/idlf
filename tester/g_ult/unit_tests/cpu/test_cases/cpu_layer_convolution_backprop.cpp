@@ -164,6 +164,15 @@ namespace
             conv_backprop->forward_item = convolution;
         }
 
+        // Create dummy softmax, required because if there will be no item using conv 0-output then it will not be computed.
+        nn_workflow_item_t *softmax = nullptr;
+        {
+            nn_workflow_use_descriptor_t desc0 = { conv_backprop, 0 };
+            EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_create_function(&softmax, 1, &desc0, 1));
+            softmax->type = NN_WORK_ITEM_TYPE_SOFTMAX;
+            softmax->output_format[0] = nn::output_format{input_format.format_3d.size[0]*input_format.format_3d.size[1]*input_format.format_3d.size[2]};
+        }
+
         // Pin inputs.
         workflow->input[0] = input;
         workflow->input[1] = input_target;
@@ -179,6 +188,7 @@ namespace
         EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_delete_function(convolution));
         EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_delete_function(loss_function));
         EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_delete_function(conv_backprop));
+        EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_delete_function(softmax));
         EXPECT_EQ(NN_API_STATUS_OK, di.workflow_delete_function(workflow));
 
         return workload;
@@ -187,20 +197,23 @@ namespace
     nn_workload_item_t* get_backprop(
         nn_workload_t* workload)
     {
-        nn_workload_opaque_t* workload_opaque = reinterpret_cast<nn_workload_opaque_t*>(workload + 1);
+        nn_workload_opaque_t* workload_opaque = static_cast<nn_workload_opaque_t*>(workload);
         nn_workload_item_t *workload_backprop = workload_opaque->order_of_execution.back();
+        assert(workload_backprop->type == NN_WORK_ITEM_TYPE_SOFTMAX);
+        workload_backprop = workload_backprop->input[0].item;
+        assert(workload_backprop->type == NN_WORK_ITEM_TYPE_CONVERT_DATA_LAYOUT);
+        workload_backprop = workload_backprop->input[0].item;
         assert(workload_backprop->type == NN_WORK_ITEM_TYPE_CONVOLUTION_BACKPROP);
-
         return workload_backprop;
     }
 
-    void backward_naive(const nn::workload_data<float> *forward_input_view,
-                        const nn::workload_data<float> *forward_weights_view,
-                        const nn::workload_data<float> *forward_output_view,
-                        const nn::workload_data<float> *backward_input_view,
-                        nn::workload_data<float> *backward_output_view,
-                        nn::workload_data<float> *backward_weights_delta_view,
-                        nn::workload_data<float> *backward_bias_delta_view,
+    void backward_naive(const nn::workload_data<> *forward_input_view,
+                        const nn::workload_data<> *forward_weights_view,
+                        const nn::workload_data<> *forward_output_view,
+                        const nn::workload_data<> *backward_input_view,
+                        nn::workload_data<> *backward_output_view,
+                        nn::workload_data<> *backward_weights_delta_view,
+                        nn::workload_data<> *backward_bias_delta_view,
                         uint32_t stride_x,
                         uint32_t stride_y, 
                         uint32_t center_offset_x,
@@ -218,12 +231,12 @@ namespace
 
         const auto slice_size = C_slice_size;
 
-        nn::workload_data<float> forward_input_buffer(forward_input_view->parent->data_buffer, forward_input_view->parent->lengths, forward_input_view->parent->layout);
-        nn::workload_data<float> forward_weights_buffer(forward_weights_view->parent->data_buffer, forward_weights_view->parent->lengths, forward_weights_view->parent->layout);
-        nn::workload_data<float> backward_input_buffer(backward_input_view->parent->data_buffer, backward_input_view->parent->lengths, backward_input_view->parent->layout);
-        nn::workload_data<float> backward_output_buffer(backward_output_view->parent->data_buffer, backward_output_view->parent->lengths, backward_output_view->parent->layout);
-        nn::workload_data<float> backward_weights_delta_buffer(backward_weights_delta_view->parent->data_buffer, backward_weights_delta_view->parent->lengths, backward_weights_delta_view->parent->layout);
-        nn::workload_data<float> backward_bias_delta_buffer(backward_bias_delta_view->parent->data_buffer, backward_bias_delta_view->parent->lengths, backward_bias_delta_view->parent->layout);
+        nn::workload_data<nn::layout_f32> forward_input_buffer(forward_input_view->parent->data_buffer, forward_input_view->parent->lengths, forward_input_view->parent->layout);
+        nn::workload_data<nn::layout_f32> forward_weights_buffer(forward_weights_view->parent->data_buffer, forward_weights_view->parent->lengths, forward_weights_view->parent->layout);
+        nn::workload_data<nn::layout_f32> backward_input_buffer(backward_input_view->parent->data_buffer, backward_input_view->parent->lengths, backward_input_view->parent->layout);
+        nn::workload_data<nn::layout_f32> backward_output_buffer(backward_output_view->parent->data_buffer, backward_output_view->parent->lengths, backward_output_view->parent->layout);
+        nn::workload_data<nn::layout_f32> backward_weights_delta_buffer(backward_weights_delta_view->parent->data_buffer, backward_weights_delta_view->parent->lengths, backward_weights_delta_view->parent->layout);
+        nn::workload_data<nn::layout_f32> backward_bias_delta_buffer(backward_bias_delta_view->parent->data_buffer, backward_bias_delta_view->parent->lengths, backward_bias_delta_view->parent->layout);
 
         // For backpropagation in [m] layer, we require s[m] = F'[m](n[m]) * W[m+1]^T * s[m+1] <=> s[m] = F'[m](n[m]) * U[m+1] => U[m+1] = W[m+1]^T * s[m+1].
         // Backpropagation for next layer already has computed U[m+1], now we need to compute F'[m](n[m]) part.
@@ -292,8 +305,8 @@ namespace
         nn_workload_data_t* data_item,
         nn_workload_data_t* data_item_ref)
     {
-        nn::workload_data<float> data(data_item->parent->data_buffer, data_item->parent->lengths, data_item->parent->layout);
-        nn::workload_data<float> reference(data_item_ref->parent->data_buffer, data_item_ref->parent->lengths, data_item_ref->parent->layout);
+        nn::workload_data<nn::layout_f32> data(data_item->parent->data_buffer, data_item->parent->lengths, data_item->parent->layout);
+        nn::workload_data<nn::layout_f32> reference(data_item_ref->parent->data_buffer, data_item_ref->parent->lengths, data_item_ref->parent->layout);
         auto& size = data_item->parent->lengths;
         for (auto n = 0u; n < size.t[0]; ++n)
             for (auto x = 0u; x < size.t[1]; ++x)
@@ -316,7 +329,7 @@ namespace
                                 }
                                 else
                                 {
-                                    if (fabs(diff / value_ref) > 5.2e-05F)
+                                    if (fabs(diff / value_ref) > 1.0e-02F)
                                     {
                                         return false;
                                     }
@@ -327,13 +340,13 @@ namespace
     }
 
     void run_primitives_api(
-        nn::workload_data<float> *forward_input,
-        nn::workload_data<float> *forward_weights,
-        nn::workload_data<float> *forward_output,
-        nn::workload_data<float> *backward_input,
-        nn::workload_data<float> *backward_output,
-        nn::workload_data<float> *backward_weights_delta,
-        nn::workload_data<float> *backward_bias_delta,
+        nn::workload_data<> *forward_input,
+        nn::workload_data<> *forward_weights,
+        nn::workload_data<> *forward_output,
+        nn::workload_data<> *backward_input,
+        nn::workload_data<> *backward_output,
+        nn::workload_data<> *backward_weights_delta,
+        nn::workload_data<> *backward_bias_delta,
         uint32_t stride_x,
         uint32_t stride_y,
         uint32_t center_offset_x,
@@ -391,7 +404,7 @@ namespace
         primitives.create_inputs(primitive, 1, primitive_inputs, 0, &status);
         ASSERT_EQ(status, NN_API_STATUS_OK);
         // this is backward_output for primitives API
-        reinterpret_cast<nn::workload_data<float>*>(primitive_inputs[0])->parent->delta_buffer = backward_output->parent->data_buffer;
+        reinterpret_cast<nn::workload_data<nn::layout_f32>*>(primitive_inputs[0])->parent->delta_buffer = backward_output->parent->data_buffer;
 
         // prepare buffers
         nn_opaque_data_t* outputs[] = {reinterpret_cast<nn_opaque_data_t*> (forward_output)};
@@ -404,7 +417,7 @@ namespace
             primitive, 1, primitive_inputs, 2, parameters, 1, outputs, 0, nullptr, nullptr);
 
         // we no longer need this
-        reinterpret_cast<nn::workload_data<float>*>(primitive_inputs[0])->parent->delta_buffer = nullptr;
+        reinterpret_cast<nn::workload_data<nn::layout_f32>*>(primitive_inputs[0])->parent->delta_buffer = nullptr;
         primitives.delete_opaque_data(primitive_inputs[0]);
 
         // input buffer needed for calculating weights_delta and bias_delta
@@ -484,13 +497,13 @@ namespace
             for (uint32_t z = 0; z < input_datas[0]->size[2]; ++z)
                 for (uint32_t y = 0; y < input_datas[0]->size[1]; ++y)
                     for (uint32_t x = 0; x < input_datas[0]->size[0]; ++x)
-                        (*input_datas[0])(x, y, z, n) = 1.0f;
+                        (*input_datas[0])(x, y, z, n) = 0.5f * static_cast<float>(n + z + y + x);
 
         for (uint32_t n = 0; n < input_datas[1]->size[3]; ++n)
             for (uint32_t z = 0; z < input_datas[1]->size[2]; ++z)
                 for (uint32_t y = 0; y < input_datas[1]->size[1]; ++y)
                     for (uint32_t x = 0; x < input_datas[1]->size[0]; ++x)
-                        (*input_datas[1])(x, y, z, n) = 0.5f;
+                        (*input_datas[1])(x, y, z, n) = 0.25f * static_cast<float>(n + z + y + x);
 
         // Get refernces to all buffers used by convolution and its backprop.
         // "Inputs" to backprop.
@@ -506,9 +519,9 @@ namespace
         auto backward_bias_delta = conv_backprop->output[2];
 
         // Create reference outputs with same layout and sizes.
-        nn::workload_data<float> ref_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
-        nn::workload_data<float> ref_backward_weight_delta(backward_weight_delta->parent->lengths, backward_weight_delta->parent->layout);
-        nn::workload_data<float> ref_backward_bias_delta(backward_bias_delta->parent->lengths, backward_bias_delta->parent->layout);
+        nn::workload_data<> ref_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
+        nn::workload_data<> ref_backward_weight_delta(backward_weight_delta->parent->lengths, backward_weight_delta->parent->layout);
+        nn::workload_data<> ref_backward_bias_delta(backward_bias_delta->parent->lengths, backward_bias_delta->parent->layout);
 
         std::memset(ref_backward_error_delta.parent->data_buffer, 0, ref_backward_error_delta.parent->buffer_size);
         std::memset(ref_backward_weight_delta.parent->data_buffer, 0, ref_backward_weight_delta.parent->buffer_size);
@@ -518,13 +531,21 @@ namespace
         NN_API_STATUS status;
         EXPECT_EQ(NN_API_STATUS_OK, di.workload_execute_function(workload, (void **)input_datas, nullptr, &status));
 
+        // Create data for naive run.
+        nn::workload_data<> naive_forward_input(
+            input_datas[0]->buffer, 
+            forward_input->parent->lengths, 
+            forward_input->parent->layout);
+
+        naive_forward_input.view_begin = forward_input->view_begin;
+        naive_forward_input.view_end = forward_input->view_end;
+
         // Run naive code.
-        forward_input->parent->data_buffer = input_datas[0]->buffer;
         backward_naive(
-            static_cast<nn::workload_data<float>*>(forward_input),
-            static_cast<nn::workload_data<float>*>(forward_weight),
-            static_cast<nn::workload_data<float>*>(forward_output),
-            static_cast<nn::workload_data<float>*>(backward_input),
+            &naive_forward_input,
+            static_cast<nn::workload_data<>*>(forward_weight),
+            static_cast<nn::workload_data<>*>(forward_output),
+            static_cast<nn::workload_data<>*>(backward_input),
             &ref_backward_error_delta,
             &ref_backward_weight_delta,
             &ref_backward_bias_delta,
@@ -534,14 +555,14 @@ namespace
             padding_y);
 
         // Run optimized code through primitive API
-        nn::workload_data<float> primitive_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
-        nn::workload_data<float> primitive_backward_weight_delta(backward_weight_delta->parent->lengths, backward_weight_delta->parent->layout);
-        nn::workload_data<float> primitive_backward_bias_delta(backward_bias_delta->parent->lengths, backward_bias_delta->parent->layout);
+        nn::workload_data<> primitive_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
+        nn::workload_data<> primitive_backward_weight_delta(backward_weight_delta->parent->lengths, backward_weight_delta->parent->layout);
+        nn::workload_data<> primitive_backward_bias_delta(backward_bias_delta->parent->lengths, backward_bias_delta->parent->layout);
         run_primitives_api(
-            static_cast<nn::workload_data<float>*>(forward_input),
-            static_cast<nn::workload_data<float>*>(forward_weight),
-            static_cast<nn::workload_data<float>*>(forward_output),
-            static_cast<nn::workload_data<float>*>(backward_input),
+            &naive_forward_input,
+            static_cast<nn::workload_data<>*>(forward_weight),
+            static_cast<nn::workload_data<>*>(forward_output),
+            static_cast<nn::workload_data<>*>(backward_input),
             &primitive_backward_error_delta,
             &primitive_backward_weight_delta,
             &primitive_backward_bias_delta,
@@ -562,17 +583,17 @@ namespace
             auto weight_index = dis_weight(gen);
             auto bias_index = dis_bias(gen);
 
-            static_cast<float*>(backward_error_delta->parent->data_buffer)[error_index] += 1.0f;
-            static_cast<float*>(backward_weight_delta->parent->data_buffer)[weight_index] += 1.0f;
-            static_cast<float*>(backward_bias_delta->parent->data_buffer)[bias_index] += 1.0f;
+            static_cast<float*>(backward_error_delta->parent->data_buffer)[error_index] += 100.0f;
+            static_cast<float*>(backward_weight_delta->parent->data_buffer)[weight_index] += 100.0f;
+            static_cast<float*>(backward_bias_delta->parent->data_buffer)[bias_index] += 100.0f;
 
             EXPECT_NE(true, compare_data_items(backward_error_delta, &ref_backward_error_delta));
             EXPECT_NE(true, compare_data_items(backward_weight_delta, &ref_backward_weight_delta));
             EXPECT_NE(true, compare_data_items(backward_bias_delta, &ref_backward_bias_delta));
 
-            static_cast<float*>(primitive_backward_error_delta.parent->data_buffer)[error_index] += 1.0f;
-            static_cast<float*>(primitive_backward_weight_delta.parent->data_buffer)[weight_index] += 1.0f;
-            static_cast<float*>(primitive_backward_bias_delta.parent->data_buffer)[bias_index] += 1.0f;
+            static_cast<float*>(primitive_backward_error_delta.parent->data_buffer)[error_index] += 100.0f;
+            static_cast<float*>(primitive_backward_weight_delta.parent->data_buffer)[weight_index] += 100.0f;
+            static_cast<float*>(primitive_backward_bias_delta.parent->data_buffer)[bias_index] += 100.0f;
 
             EXPECT_NE(true, compare_data_items(&primitive_backward_error_delta, &ref_backward_error_delta));
             EXPECT_NE(true, compare_data_items(&primitive_backward_weight_delta, &ref_backward_weight_delta));
@@ -602,7 +623,7 @@ TEST(cpu_convolution_backprop, standard_square_positive)
 {
     for (auto batch : { 1, 8 })
         for (auto in = 1; in < 5; in++)
-            for (auto in_z : { 1, 2, 3, 4 })
+            for (auto in_z : { 1, 2, 3 })
                 for (auto out_z : { 16, 32 })
                     for (auto wght = in; wght > 0; wght--)
                         for (auto padding = 0; padding < wght-1; ++padding)
@@ -614,7 +635,7 @@ TEST(cpu_convolution_backprop, standard_square_negative)
 {
     for (auto batch : { 1, 8 })
         for (auto in = 1; in < 5; in++)
-            for (auto in_z : { 1, 2, 3, 4 })
+            for (auto in_z : { 1, 2, 3 })
                 for (auto out_z : { 16, 32 })
                     for (auto wght = in; wght > 0; wght--)
                         for (auto padding = 0; padding < wght-1; ++padding)

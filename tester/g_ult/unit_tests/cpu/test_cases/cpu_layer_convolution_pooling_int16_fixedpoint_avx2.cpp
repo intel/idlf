@@ -27,6 +27,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "tester/g_ult/unit_tests/cpu/naive_implementations.h"
 #include "device/cpu/core/fixedpoint/layer_convolution_pooling_int16_fixedpoint_avx2.h"
+#include <gtest/gtest.h>
 
 const uint32_t C_simd_width = sizeof(__m256)/sizeof(int32_t);
 
@@ -68,13 +69,13 @@ static void ult_nn_convolution_initialize_work_item(
     if (num_input_feature_maps == 4)
         IFMBlock = 4;
 
-    nn_workload_data_layout_t in_layout = nn::workload_data<int16_t>::layout.pxyznq;
+    nn_workload_data_layout_t in_layout = nn::layout_t<nn::layout_pxyznq_i16>::layout;
 
-    nn_workload_data_layout_t out_layout = nn::workload_data<int16_t>::layout.pxyznq;
+    nn_workload_data_layout_t out_layout = nn::layout_t<nn::layout_pxyznq_i16>::layout;
 
-    nn_workload_data_layout_t bias_layout = nn::workload_data<int32_t>::layout.zxynpq;
+    nn_workload_data_layout_t bias_layout = nn::layout_t<nn::layout_zxynpq_i32>::layout;
 
-    nn_workload_data_layout_t weight_layout = nn::workload_data<int16_t>::layout.ypznxq;
+    nn_workload_data_layout_t weight_layout = nn::layout_t<nn::layout_ypznxq_i16>::layout;
 
     nn_workload_data_coords_t input_coords = 
     { 
@@ -164,6 +165,7 @@ static void ult_nn_convolution_initialize_work_item(
 
     input_item = new nn_workload_item();
     input_item->type = NN_WORK_ITEM_TYPE_INPUT;
+    input_item->primitive = nullptr;
 
     nn::workload_data<int16_t> *input_data = new nn::workload_data<int16_t>(input_coords, in_layout);
     memcpy(input_data->parent->data_buffer, input, input_data->parent->buffer_size);
@@ -205,15 +207,29 @@ static void ult_nn_convolution_initialize_work_item(
 //////////////////////////////////////////////////////////////////////////////////////////////////
 static void ult_nn_convolution_deinitialize_work_item(nn_workload_item* &work_item)
 {
-    auto &arguments = work_item->arguments.forward_convolution_pooling_max_2x2_stride_2x2_fixedpoint;
-    delete arguments.biases;
-    delete arguments.weights;
+    if(work_item->type != NN_WORK_ITEM_TYPE_INPUT)
+    {
+        auto &arguments = work_item->arguments.forward_convolution_pooling_max_2x2_stride_2x2_fixedpoint;
+        delete arguments.biases;
+        delete arguments.weights;
+    }
 
-    work_item->input.clear();
-    delete work_item->output[0];
+    for(auto& parameter : work_item->parameters)
+    {
+        delete parameter;
+        parameter = nullptr;
+    }
+
+    for(auto& output : work_item->output)
+    {
+        delete output;
+        output = nullptr;
+    }
+
+    delete work_item->primitive;
+    work_item->primitive = nullptr;
 
     delete work_item;
-
     work_item = nullptr;
 }
 
@@ -744,8 +760,9 @@ static bool ult_perform_test(
             center_y);
     }
 
-     //Cleanup.
+    //Cleanup.
     ult_nn_convolution_deinitialize_work_item(work_item);
+    ult_nn_convolution_deinitialize_work_item(input_item);
 
     ult_nn_convolution_both_dealloc(
         input,

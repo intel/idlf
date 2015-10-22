@@ -37,6 +37,10 @@ struct nn_primitive_t {
                          const std::vector<const nn_workload_data_t*> &parameters,
                          const std::vector<nn_workload_data_t *> &outputs) {}
 
+    virtual void prepare_forward(const std::vector<const nn_workload_data_t*> &inputs,
+                                 const std::vector<const nn_workload_data_t*> &parameters,
+                                 const std::vector<nn_workload_data_t *> &outputs) {}
+
     virtual void backward(const std::vector<nn_workload_data_t *> &inputs,              // TODO: change to "front" or "bottom" ?
                           const std::vector<const nn_workload_data_t *> &parameters,
                           const std::vector<const nn_workload_data_t *> &outputs) {}    // TODO: change to "back" or "top" ?

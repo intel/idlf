@@ -39,6 +39,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "device/api/nn_device_api.h"
 #include "common/nn_data_tools.h"
 
+
 // RAII for library; throws runtime_error when fails
 struct scoped_library {
     std::string name;
@@ -95,6 +96,15 @@ public:
 };
 
 void run_mnist_training( scoped_library      &library,
+                         scoped_device       &device,
+                         scoped_interface_0  &interface_0,
+                         nn_workload_t *workload,
+                         workflow_builder_base* builder,
+                         char *argv[], 
+                         std::map<std::string, std::string> &config, 
+                         const int config_batch );
+
+void run_images_training( scoped_library      &library,
                          scoped_device       &device,
                          scoped_interface_0  &interface_0,
                          nn_workload_t *workload,

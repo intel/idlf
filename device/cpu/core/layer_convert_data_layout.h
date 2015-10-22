@@ -62,7 +62,7 @@ class convert_zxyn_nx_f32 : public nn_primitive_t {
     nn_device_internal *const device;
 
   private:
-    void forward(const nn::workload_data<float> *input, nn::workload_data<float> *output);
+      void forward(const nn::workload_data<> *input, nn::workload_data<> *output);
 };
 
 class convert_z_block_xyz_z2nz : public nn_primitive_t {
@@ -121,4 +121,6 @@ protected:
         batch_size;
     nn_device_internal *const device;
 };
+
 } // namespace layer
+

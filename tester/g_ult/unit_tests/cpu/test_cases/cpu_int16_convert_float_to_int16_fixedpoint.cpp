@@ -58,9 +58,9 @@ TEST(cpu_int16_convert_float_to_int16_fixedpoint, convert_RGB_to_ZRGB) {
     nn_device_interface_0_t device_interface_0;
     test_setup(device_description, device_interface_0);
 
-    nn_workload_data_layout_t input_layout = nn::workload_data<float>::layout.zxynpq;
+    nn_workload_data_layout_t input_layout = nn::layout_t<nn::layout_zxynpq_f32>::layout;
 
-    nn_workload_data_layout_t output_layout = nn::workload_data<int16_t>::layout.pxyznq;
+    nn_workload_data_layout_t output_layout = nn::layout_t<nn::layout_pxyznq_f32>::layout;
 
     nn_workload_data_coords_t input_coords = {
         1, // batch size
@@ -80,7 +80,7 @@ TEST(cpu_int16_convert_float_to_int16_fixedpoint, convert_RGB_to_ZRGB) {
         1,
     };
 
-    std::unique_ptr<nn::workload_data<float>> input_data(new nn::workload_data<float>(input_coords, input_layout));
+    std::unique_ptr<nn::workload_data<>> input_data(new nn::workload_data<>(input_coords, input_layout));
     for (int i = 0; i < width * height * 3; ++i)
         reinterpret_cast<float *>(input_data->parent->data_buffer)[i] = i;
 

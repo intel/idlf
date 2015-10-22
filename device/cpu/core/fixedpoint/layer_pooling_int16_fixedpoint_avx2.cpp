@@ -37,6 +37,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace int16_fixedpoint
 {
     pooling_i16::pooling_i16(
+        NN_POOLING_MODE pooling_mode,
         const size_t num_output,
         size_t output_w,
         size_t output_h,
@@ -44,6 +45,8 @@ namespace int16_fixedpoint
         size_t pool_size_y,
         size_t pool_stride_x,
         size_t pool_stride_y,
+        const int32_t center_offset_x,
+        const int32_t center_offset_y,
         size_t batch_size,
         size_t output_padding_left,
         size_t output_padding_right,
@@ -51,6 +54,7 @@ namespace int16_fixedpoint
         size_t output_padding_bottom,
         nn_device_internal *device)
         :
+        pooling_mode(pooling_mode),
         num_output(num_output),
         output_w(output_w),
         output_h(output_h),
@@ -58,6 +62,8 @@ namespace int16_fixedpoint
         pool_size_y(pool_size_y),
         pool_stride_x(pool_stride_x),
         pool_stride_y(pool_stride_y),
+        center_offset_x(center_offset_x),
+        center_offset_y(center_offset_y),
         batch_size(batch_size),
         output_padding_left(output_padding_left),
         output_padding_right(output_padding_right),
@@ -273,7 +279,7 @@ namespace int16_fixedpoint
     //        NN_DATATYPE_INT16
     //    };
 
-    //    nn_workload_data_coords_t size = { 
+    //    nn_workload_data_coords_t size = {
     //        static_cast<uint32_t>(batch_size),
     //        static_cast<uint32_t>(output_w),
     //        static_cast<uint32_t>(output_h),
@@ -443,6 +449,8 @@ nn_primitives_pooling_i16_create_0(
     size_t num_feature_maps,
     size_t output_w,
     size_t output_h,
+    const int32_t center_offset_x,
+    const int32_t center_offset_y,
     size_t batch_size,
     const nn_primitives_pooling_hints_t *hints,
     NN_API_STATUS *status)
@@ -454,6 +462,7 @@ nn_primitives_pooling_i16_create_0(
         hints_ = *hints;
 
     return new int16_fixedpoint::pooling_i16(
+        pooling_mode,
         num_feature_maps,
         output_w,
         output_h,
@@ -461,6 +470,8 @@ nn_primitives_pooling_i16_create_0(
         pool_size_y,
         pool_stride_x,
         pool_stride_y,
+        center_offset_x,
+        center_offset_y,
         batch_size,
         hints_.output_padding.left,
         hints_.output_padding.right,

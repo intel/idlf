@@ -379,7 +379,7 @@ bool run_arithmetic_workflow_test( const nn_device_interface_0_t &di,
     uint_least32_t output_depth  = num_input_feature_maps;
 
     // Specify layout
-    nn_workload_data_layout_t output_layout = nn::workload_data<float>::layout.xyzpnq;
+    nn_workload_data_layout_t output_layout = nn::layout_t<nn::layout_xyzpnq_f32>::layout;
 
     // specify dimensions of input, output
     size_t output_coords[4] = { input_feature_map_width, input_feature_map_height, num_input_feature_maps, num_batches };
@@ -539,7 +539,7 @@ bool run_normalization_workflow_test( const nn_device_interface_0_t &di,
 
     //TODO: Try changing layout so that depth of input feature map comes first
     // Specify layout
-    nn_workload_data_layout_t output_layout = nn::workload_data<float>::layout.xyzpnq;
+    nn_workload_data_layout_t output_layout = nn::layout_t<nn::layout_xyzpnq_f32>::layout;
 
     // specify dimensions of input, output
     size_t output_coords[4] = { input_feature_map_width, input_feature_map_height, num_input_feature_maps, num_batches };
@@ -681,7 +681,7 @@ bool run_normalization_view_convolution_test( const nn_device_interface_0_t &di)
 
 
     // Specify layout
-    nn_workload_data_layout_t output_layout = nn::workload_data<float>::layout.xyzpnq;
+    nn_workload_data_layout_t output_layout = nn::layout_t<nn::layout_xyzpnq_f32>::layout;
 
     // specify dimensions of input, output
     size_t input_coords[4] = {input_feature_map_width, input_feature_map_height, num_input_feature_maps, num_batches};
@@ -929,7 +929,7 @@ bool run_normalization_convolution_split_test( const nn_device_interface_0_t &di
     //TODO: zero-padding support !!!
 
     // Specify layout
-    nn_workload_data_layout_t output_layout = nn::workload_data<float>::layout.xyzpnq;
+    nn_workload_data_layout_t output_layout = nn::layout_t<nn::layout_xyzpnq_f32>::layout;
 
     // specify dimensions of input, output
     size_t input_coords[4] = {input_feature_map_width, input_feature_map_height, num_input_feature_maps, num_batches};
@@ -1241,12 +1241,7 @@ bool run_views( const nn_device_interface_0_t &di)
     uint_least32_t input_feature_map_height = 100;
 
     // Specify layout
-    nn_workload_data_layout_t input_output_layout = {
-        { 0, 0, 0, 0, 0, 0 }, // tile in log2(size)
-        { 0, 0, 0, 0, 0, 0 }, // alignment
-        nn::workload_data<float>::layout.xyzpnq,
-        NN_DATATYPE_FLOAT
-    };
+    nn_workload_data_layout_t input_output_layout = nn::workload_data<nn::layout_xyzpnq_f32>;
 
     nn_workload_data_coords_t output_view_begin( 0, 1, 1, 0, 0, 0 );
     nn_workload_data_coords_t output_view_end( 0, 1, 11, 0, 0, 0 );
@@ -1332,8 +1327,8 @@ bool run_views( const nn_device_interface_0_t &di)
                                              num_batches ) );
 
     // Here we Execute compiled workload
-    std::unique_ptr< nn::workload_data< float > > execute_inputs[1];
-    std::unique_ptr< nn::workload_data< float > > execute_outputs[1];
+    std::unique_ptr< nn::workload_data<> > execute_inputs[1];
+    std::unique_ptr< nn::workload_data<> > execute_outputs[1];
 
     execute_inputs[0]  = create_nn_workload_data_using_buffer( input, input_output_layout, input_coords );
     execute_outputs[0] = create_nn_workload_data_using_buffer( gpu_outputs, input_output_layout, output_coords );
@@ -1389,12 +1384,7 @@ bool run_pooling_view_workflow_test( const nn_device_interface_0_t &di)
     uint_least32_t output_depth  = num_input_feature_maps;
 
     // Specify layout
-    nn_workload_data_layout_t input_output_layout = {
-        { 0, 0, 0, 0, 0, 0 }, // tile in log2(size)
-        { 0, 0, 0, 0, 0, 0 }, // alignment
-        nn::workload_data<float>::layout.xyzpnq,
-        NN_DATATYPE_FLOAT
-    };
+    nn_workload_data_layout_t input_output_layout = nn::workload_data<nn::layout_xyzpnq_f32>;
 
     //// Let's define a views to input and output for pooling operation
     nn_workload_data_coords_t input_view_begin( 0, 0, 0, 0, 0, 0 );
@@ -1511,8 +1501,8 @@ bool run_pooling_view_workflow_test( const nn_device_interface_0_t &di)
                                              num_batches ) );
 
     // Here we Execute compiled workload
-    std::unique_ptr< nn::workload_data< float > > execute_inputs[1];
-    std::unique_ptr< nn::workload_data< float > > execute_outputs[1];
+    std::unique_ptr< nn::workload_data<> > execute_inputs[1];
+    std::unique_ptr< nn::workload_data<> > execute_outputs[1];
 
     execute_inputs[0]  = create_nn_workload_data_using_buffer( input, input_output_layout, input_coords );
     execute_outputs[0] = create_nn_workload_data_using_buffer( gpu_outputs, input_output_layout, output_coords );
@@ -1562,7 +1552,7 @@ bool run_softmax_workflow_test( const nn_device_interface_0_t &di,
                        uint_least32_t                num_batches) // length of input to be  processed (softmax normalize)
 {
     // Specify layout of softmax workload
-    nn_workload_data_layout_t output_layout = nn::workload_data<float>::layout.xyzpnq;
+    nn_workload_data_layout_t output_layout = nn::layout_t<nn::layout_xyzpnq_f32>::layout;
 
     // specify dimensions of input, output
     size_t output_coords[2] = {num_samples, num_batches};
@@ -1681,18 +1671,8 @@ bool run_pooling_workflow_test( const nn_device_interface_0_t &di,
 
 #if 0
     // Specify layouts of pooling buffers
-    nn_workload_data_layout_t input_layout = {
-        { 0, 0, 0, 0, 0, 0 }, // tile in log2(size)
-        { 0, 0, 0, 0, 0, 0 }, // alignment
-        nn::workload_data<float>::layout.xyzpnq, // ordering
-        NN_DATATYPE_FLOAT
-    };
-    nn_workload_data_layout_t output_layout = {
-        { 0, 0, 0, 0, 0, 0 }, // tile in log2(size)
-        { 0, 0, 0, 0, 0, 0 }, // alignment
-        nn::workload_data<float>::layout.xyzpnq, // ordering
-        NN_DATATYPE_FLOAT
-    };
+    nn_workload_data_layout_t input_layout = nn::workload_data<nn::layout_xyzpnq_f32>;
+    nn_workload_data_layout_t output_layout = nn::workload_data<nn::layout_xyzpnq_f32>;
 #endif
 
     // specify dimensions of input and output buffers
@@ -1835,7 +1815,7 @@ bool run_pooling_fully_connected_workflow_test(
     uint_least32_t pooling_output_depth  = num_input_feature_maps;
 
     // Specify layout
-    nn_workload_data_layout_t output_layout = nn::workload_data<float>::layout.xyzpnq;
+    nn_workload_data_layout_t output_layout = nn::layout_t<nn::layout_xyzpnq_f32>::layout;
 
     // specify dimensions of input, output
     size_t input_coords[4] = {input_feature_map_width, input_feature_map_height, num_input_feature_maps, num_batches};
@@ -2049,12 +2029,7 @@ bool run_fully_connected_workflow_test(
 
 #if 0
     // layouts of weights, outputs and inputs of fully connected layers
-    nn_workload_data_layout_t all_layout = {
-        { 0, 0, 0, 0, 0, 0 }, // tile in log2(size)
-        { 0, 0, 0, 0, 0, 0 }, // alignment
-        nn::workload_data<float>::layout.xyzpnq, // ordering
-        NN_DATATYPE_FLOAT
-    };
+    nn_workload_data_layout_t all_layout = nn::workload_data<nn::layout_xyzpnq_f32>;
 #endif
 
     // specify dimensions of input, output and weights
@@ -2504,12 +2479,7 @@ bool run_convolve_workflow_test( const nn_device_interface_0_t &di,
 
 #if 0
     // Specify layout
-    nn_workload_data_layout_t all_layout = {
-        { 0, 0, 0, 0, 0, 0 },
-        { 0, 0, 0, 0, 0, 0 },
-        nn::workload_data<float>::layout.xyzpnq,
-        NN_DATATYPE_FLOAT
-    };
+    nn_workload_data_layout_t all_layout = nn::workload_data<nn::layout_xyzpnq_f32>;
 #endif
 
     size_t   bias_coords[1] = {num_output_feature_maps};
@@ -2743,7 +2713,7 @@ bool run_merged_convolve_maxpool_workflow_test(const nn_device_interface_0_t &di
     } 
 
     // Specify layout
-    nn_workload_data_layout_t all_layout = nn::workload_data<float>::layout.xyzpnq;
+    nn_workload_data_layout_t all_layout = nn::layout_t<nn::layout_xyzpnq_f32>::layout;
 
     // Input generation
     float *input = nullptr;

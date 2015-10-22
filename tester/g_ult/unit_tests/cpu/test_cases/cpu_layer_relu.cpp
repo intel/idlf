@@ -116,6 +116,7 @@ static bool ult_perform_test(
     primitives.delete_event(relu);
     primitives.delete_opaque_data(input_internal);
     primitives.delete_opaque_data(output_internal);
+    primitives.delete_primitive(primitive);
     primitives.delete_device(device);
 
     return passed;

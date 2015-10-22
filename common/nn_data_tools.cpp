@@ -156,16 +156,14 @@ nn::data<float> *nn_data_load_from_file_time_measure(
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 nn::data<float, 3>*  nn_data_load_from_image(std::string  filename, // Load of all data from a image filename
-                                             uint16_t std_size,     // size of image both: height and width
+                                             uint32_t std_size,     // size of image both: height and width
                                              fi::prepare_image_t image_process, // pointer of function for image processing
                                              bool RGB_order)        // if true - image have RGB order, otherwise BGR
 // supported formats: JPEG, J2K, JP2, PNG, BMP, WEBP, GIF, TIFF
 {
-
     auto data = new nn::data<float,3>(3, std_size, std_size);
     if(FIBITMAP *bitmap_raw = fi::load_image_from_file( filename )) {
         FIBITMAP *bitmap;
-
         if(FreeImage_GetBPP(bitmap_raw)!=24) {
             bitmap = FreeImage_ConvertTo24Bits(bitmap_raw);
             FreeImage_Unload(bitmap_raw);
@@ -174,13 +172,14 @@ nn::data<float, 3>*  nn_data_load_from_image(std::string  filename, // Load of a
         bitmap = image_process(bitmap, std_size);
 
         auto bytes_per_pixel = FreeImage_GetLine( bitmap )/std_size;
+        auto data_buffer = static_cast<float*>(data->buffer);
         if(RGB_order) {
             for(uint32_t y=0u; y<std_size; ++y) {
                 uint8_t *pixel = FreeImage_GetScanLine(bitmap, std_size - y - 1);
                 for(uint32_t x=0u; x<std_size; ++x) {
-                    data->at(0, x, y) = pixel[FI_RGBA_RED];
-                    data->at(1, x, y) = pixel[FI_RGBA_GREEN];
-                    data->at(2, x, y) = pixel[FI_RGBA_BLUE];
+                    *(data_buffer + 0 + x*3 + y*3*std_size) = pixel[FI_RGBA_RED];
+                    *(data_buffer + 1 + x*3 + y*3*std_size) = pixel[FI_RGBA_GREEN];
+                    *(data_buffer + 2 + x*3 + y*3*std_size) = pixel[FI_RGBA_BLUE];
                     pixel += bytes_per_pixel;
                 }
             }
@@ -189,15 +188,13 @@ nn::data<float, 3>*  nn_data_load_from_image(std::string  filename, // Load of a
             for(uint32_t y=0u; y<std_size; ++y) {
                 uint8_t *pixel = FreeImage_GetScanLine(bitmap, std_size - y - 1);
                 for(uint32_t x=0u; x<std_size; ++x) {
-                    data->at(0, x, y) = pixel[FI_RGBA_BLUE];
-                    data->at(1, x, y) = pixel[FI_RGBA_GREEN];
-                    data->at(2, x, y) = pixel[FI_RGBA_RED];
+                    *(data_buffer + 0 + x*3 + y*3*std_size) = pixel[FI_RGBA_BLUE];
+                    *(data_buffer + 1 + x*3 + y*3*std_size) = pixel[FI_RGBA_GREEN];
+                    *(data_buffer + 2 + x*3 + y*3*std_size) = pixel[FI_RGBA_RED];
                     pixel += bytes_per_pixel;
                 }
             }
-
         }
-
         FreeImage_Unload(bitmap);
         return data;
     }
@@ -207,10 +204,10 @@ nn::data<float, 3>*  nn_data_load_from_image(std::string  filename, // Load of a
 nn::data<float>* nn_data_extend_biases_by_padding( nn::data<float>* biases, uint32_t required_num_outputs)
 {
     // Check if number of out FM (dim number 1)  is smaller than required (to be extended to) number of dimensions
-    if (biases->size[0] >= required_num_outputs) 
+    if (biases->size[0] >= required_num_outputs)
     {
         assert(0);
-        return nullptr;   
+        return nullptr;
     }
 
     // Make a new biases container with dimension corressponding to number of outputs (num filters)
@@ -221,36 +218,36 @@ nn::data<float>* nn_data_extend_biases_by_padding( nn::data<float>* biases, uint
     {
         if(n < biases->size[0])
         {
-            extended_biases->at(n) = biases->at(n); 
+            extended_biases->at(n) = biases->at(n);
         } else {
-            extended_biases->at(n) = 0.0f; 
+            extended_biases->at(n) = 0.0f;
         }
     }
 
-    return extended_biases; 
+    return extended_biases;
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 nn::data<float>* nn_data_extend_weights_by_padding( nn::data<float>* weights, uint32_t extended_num_input_feature_maps, uint32_t extended_num_output_feature_maps)
 {
     // Check if number of out FM (dim number 3)  is smaller than required (to be extended to) number of dimensions
     // TODO: Make it better validation of sizes
-    if(weights->size[3] > extended_num_output_feature_maps ) 
+    if(weights->size[3] > extended_num_output_feature_maps )
     {
         assert(0);
-        return nullptr;   
+        return nullptr;
     }
 
-    if(weights->size[2] > extended_num_input_feature_maps ) 
+    if(weights->size[2] > extended_num_input_feature_maps )
     {
         assert(0);
-        return nullptr;   
+        return nullptr;
     }
 
     // Make a new weights container with dimension corressponding to number of outputs (num filters)
     size_t sizes[4] = {weights->size[0],weights->size[1],extended_num_input_feature_maps, extended_num_output_feature_maps};
     nn::data<float>* extended_weights = new nn::data<float>(sizes,4);
- 
-    // Copy source weights into extended container and fill the remaining part woth zeros 
+
+    // Copy source weights into extended container and fill the remaining part woth zeros
     for(uint32_t n = 0; n< extended_weights->size[3]; ++n)
     {
         if(n < weights->size[3])
@@ -263,7 +260,7 @@ nn::data<float>* nn_data_extend_weights_by_padding( nn::data<float>* weights, ui
                     {
                         for(uint32_t x = 0; x< weights->size[0]; ++x)
                         {
-                            extended_weights->at(x,y,z,n) = weights->at(x,y,z,n); 
+                            extended_weights->at(x,y,z,n) = weights->at(x,y,z,n);
                         }
                     }
                 } else {
@@ -271,7 +268,7 @@ nn::data<float>* nn_data_extend_weights_by_padding( nn::data<float>* weights, ui
                     {
                         for(uint32_t x = 0; x< extended_weights->size[0]; ++x)
                         {
-                             extended_weights->at(x,y,z,n) = 0.0f; 
+                             extended_weights->at(x,y,z,n) = 0.0f;
                         }
                     }
                 }
@@ -283,14 +280,14 @@ nn::data<float>* nn_data_extend_weights_by_padding( nn::data<float>* weights, ui
                 {
                     for(uint32_t x = 0; x< weights->size[0]; ++x)
                     {
-                         extended_weights->at(x,y,z,n) = 0.0f; 
+                         extended_weights->at(x,y,z,n) = 0.0f;
                     }
                 }
             }
         }
     }
-   
-    return extended_weights; 
+
+    return extended_weights;
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 nn::data<float>* nn_data_convert_weights_2D_to_4D(nn::data<float>*src, uint32_t size_x,uint32_t size_y, uint32_t size_z, uint32_t size_n)
@@ -316,20 +313,20 @@ nn::data<float>* nn_data_convert_weights_2D_to_4D(nn::data<float>*src, uint32_t 
             {
                 for(uint32_t x = 0; x< size_x; ++x)
                 {
-                    converted_weights->at(x,y,z,n) = src->at(idx++,n); 
+                    converted_weights->at(x,y,z,n) = src->at(idx++,n);
                 }
             }
         }
     }
 
     return converted_weights;
-} 
+}
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 nn::data<float, 4>*  nn_data_load_from_image_list(          // Load of all data from a batch of image files
     std::vector<std::string>*  filelist,                    // Pointer to vector contained a batch of filenames of images
-    uint16_t  std_size,                                     // All images will be converted to uniform size -> std_size
+    uint32_t  std_size,                                     // All images will be converted to uniform size -> std_size
     fi::prepare_image_t image_process,                      // Pointer of function for image processing
-    uint16_t batching_size,                                 // A portion of the images must have a specific size
+    uint32_t batching_size,                                 // A portion of the images must have a specific size
     bool RGB_order)                                         // If true, then images are load with RGB order, otherwise BGR
     // supported formats: JPEG, J2K, JP2, PNG, BMP, WEBP, GIF, TIFF
 {
@@ -345,24 +342,191 @@ nn::data<float, 4>*  nn_data_load_from_image_list(          // Load of all data 
     auto image_stride = 3*std_size*std_size;
     for(auto index=0u; index<batching_size; ++index) {
         float *buffer = reinterpret_cast<float *>(result->buffer);
-        nn::data<float,3> view(buffer+index*image_stride, 3, std_size, std_size);
+        nn::data<float, 3> view(buffer + index*image_stride, 3, std_size, std_size);
         if(it!=filelist->end()) {
             auto image = nn_data_load_from_image(*it, std_size, image_process, RGB_order);
             if(image) memcpy(view.buffer, image->buffer, view.count()*sizeof(float));
             else set_zero(view);
             delete image;
             ++it;
-        } else set_zero(view);
+        }
+        else set_zero(view);
     }
     return result;
 
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+nn::data<float, 4>*  nn_data_load_from_image_list_with_padding(     // Load of all data from a batch of image files
+    std::vector<std::string>*  filelist,                            // Pointer to vector contained a batch of filenames of images
+    uint16_t  std_size,                                             // All images will be converted to uniform size -> std_size
+    fi::prepare_image_t image_process,                              // Pointer of function for image processing
+    uint16_t batching_size,                                         // A portion of the images must have a specific size
+    const size_t output_padding_left,
+    const size_t output_padding_right,
+    const size_t output_padding_top,
+    const size_t output_padding_bottom,
+    bool RGB_order)                                                 // If true, then images are load with RGB order, otherwise BGR
+    // supported formats: JPEG, J2K, JP2, PNG, BMP, WEBP, GIF, TIFF
+{
+    auto set_zero = [](nn::data<float, 3> &dst) {
+        for(auto z=0u; z<dst.size[2]; ++z)
+            for(auto y=0u; y<dst.size[1]; ++y)
+                for(auto x=0u; x<dst.size[0]; ++x)
+                    dst(x,y,z) = 0.0f;
+    };
+
+    auto result = new nn::data<float, 4>(3, std_size, std_size, batching_size);
+    auto it = filelist->begin();
+    auto image_stride = 3 * std_size*std_size;
+    for (auto index = 0u; index < batching_size; ++index) {
+        float *buffer = reinterpret_cast<float *>(result->buffer);
+        nn::data<float, 3> view(buffer + index*image_stride, 3, std_size, std_size);
+        set_zero(view);
+
+        if (it != filelist->end()) {
+            size_t img_size = 256;// std_size - (output_padding_left + output_padding_right);
+            size_t dest_size = 224;
+            auto image = nn_data_load_from_image(*it, img_size, image_process, RGB_order);
+            if (image) {
+                for (int y = 0; y < dest_size; ++y) {
+                    memcpy((float *)view.buffer + (output_padding_left + (output_padding_top + y) * std_size) * 3, (float *)image->buffer + (((y + (img_size - dest_size) / 2)*img_size + (img_size - dest_size) / 2)) * 3, 3 * dest_size*sizeof(float));
+                    //memcpy(&view.at(0, output_padding_left, output_padding_top + y), &image->at(0, 0, y), 3 * img_size * sizeof(float));
+                }
+            }
+            else set_zero(view);
+            delete image;
+            ++it;
+        }
+        else set_zero(view);
+    }
+
+    return result;
+
+}
+
+nn::data<int32_t, 2>*  nn_data_load_from_label_list(
+    std::vector<int32_t>*  label_list,
+    uint32_t batching_size)
+    // supported formats: TXT
+{
+    auto result = new nn::data<int32_t, 2>(1, batching_size);
+    uint32_t index = 0;
+    for(auto it = label_list->begin(); it != label_list->end(); ++it, ++index)
+        (*result)(0,index) = *it;
+
+    return result;
+}
+
+
+nn_training_descriptor_t get_directory_train_images_and_labels(
+    std::string images_path,
+    fi::prepare_image_t image_process,
+    uint32_t std_size,
+    uint32_t batch,
+    bool RGB_order)
+{
+    std::ifstream lifs( images_path+"/train.txt" );
+
+    std::vector<std::string> image_names;
+    std::vector<int32_t> label_ids;
+
+    while( !lifs.eof() )
+    {
+        std::string image_name;
+        int32_t label_id;
+        lifs >> image_name >> label_id;
+
+        image_names.push_back(images_path + "/" + image_name);
+        label_ids.push_back(label_id);
+    }
+
+    auto elements = image_names.size();
+    std::cout << "Found " << elements << " training images descriptors" << std::endl;
+
+    if(elements % batch != 0)
+        throw std::invalid_argument("get_train_images: number of descriptors not adjusted to batch size");
+
+    if(image_names.size() != label_ids.size())
+        throw std::invalid_argument("get_train_images: number of labels is different from number of images as described in training list");
+
+    nn_training_descriptor_t result = {nn_data_load_from_image_list(
+            &image_names,
+            static_cast<uint32_t>(std_size),
+            image_process,
+            static_cast<uint32_t>(elements),
+            RGB_order),
+            nn_data_load_from_label_list(&label_ids, static_cast<uint32_t>(elements))
+    };
+
+    if(result.images->size[3] != result.labels->size[1])
+        throw std::invalid_argument("get_train_images: loaded number of labels is different from loaded number of images");
+
+    if(result.images->size[3] != image_names.size())
+        throw std::invalid_argument("get_train_images: number of loaded items is different than number of descriptors");
+
+    std::cout << "Loaded " << result.images->size[3] << " training images" << std::endl;
+    return result;
+}
+
+nn_training_descriptor_t get_directory_val_images_and_labels(
+    std::string images_path,
+    fi::prepare_image_t image_process,
+    uint32_t std_size,
+    uint32_t batch,
+    bool RGB_order)
+{
+    std::ifstream lifs( images_path+"/val.txt" );
+
+    std::vector<std::string> image_names;
+    std::vector<int32_t> label_ids;
+
+    while( !lifs.eof() )
+    {
+        std::string image_name;
+        int32_t label_id;
+        lifs >> image_name >> label_id;
+
+        image_names.push_back(images_path + "/" + image_name);
+        label_ids.push_back(label_id);
+    }
+
+    auto elements = image_names.size();
+    std::cout << "Found " << elements << " validation images descriptors" << std::endl;
+
+    if(elements % batch != 0)
+        throw std::invalid_argument("get_val_images: number of descriptors not adjusted to batch size");
+
+    if(image_names.size() != label_ids.size())
+        throw std::invalid_argument("get_val_images: number of labels is different from number of images as described in validation list");
+
+    nn_training_descriptor_t result = {nn_data_load_from_image_list(
+            &image_names,
+            static_cast<uint32_t>(std_size),
+            image_process,
+            static_cast<uint32_t>(elements),
+            RGB_order),
+            nn_data_load_from_label_list(&label_ids, static_cast<uint32_t>(elements))
+    };
+
+    if(result.images->size[3] != result.labels->size[1])
+        throw std::invalid_argument("get_val_images: loaded number of labels is different from loaded number of images");
+
+    if(result.images->size[3] != image_names.size())
+        throw std::invalid_argument("get_val_images: number of loaded items is different than number of descriptors");
+
+    std::cout << "Loaded " << result.images->size[3] << " validation images" << std::endl;
+
+    return result;
+}
+
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Read all labels from given mnist labels file and all corressponding images from mnist images file
 void nn_data_load_images_and_labels_from_mnist_files( nn::data< float, 3 >* &images, nn::data< char, 1 >* &labels, std::string &mnist_images, std::string &mnist_labels)
 {
-    char int_read[sizeof(uint32_t)]; 
-    const int mnist_labels_magic_number = 2049; 
+    char int_read[sizeof(uint32_t)];
+    const int mnist_labels_magic_number = 2049;
     const int mnist_images_magic_number = 2051;
 
     // Convert 4 chars in big endian order into 4bytes long integer
@@ -374,75 +538,75 @@ void nn_data_load_images_and_labels_from_mnist_files( nn::data< float, 3 >* &ima
 
     //1. Read MNIST labels
     std::ifstream lifs;
-    lifs.open(mnist_labels, std::ifstream::binary ); 
+    lifs.open(mnist_labels, std::ifstream::binary );
 
     if(lifs.good() == false) {
-        std::string err_msg("Error reading: " + mnist_labels); 
+        std::string err_msg("Error reading: " + mnist_labels);
         throw std::runtime_error(err_msg.c_str());
     }
 
     // 1.1 Get Magic number
     lifs.read(int_read,sizeof(uint32_t));
-    uint32_t magic_number = block_to_int(int_read); 
+    uint32_t magic_number = block_to_int(int_read);
     if( magic_number != mnist_labels_magic_number ) {
-        std::string err_msg("Error reading MNIST Labels eg. Wrong Magic number read: "); 
+        std::string err_msg("Error reading MNIST Labels eg. Wrong Magic number read: ");
         err_msg += std::to_string(magic_number );
         throw std::runtime_error(err_msg);
     }
 
     // 1.2 Get Number of labels
     lifs.read(int_read,sizeof(uint32_t));
-    uint32_t num_labels = block_to_int(int_read); 
+    uint32_t num_labels = block_to_int(int_read);
 
     // 1.3 Get labels
     labels = new nn::data<char, 1>(num_labels);
     char* pbuf = (char*)labels->buffer;
-    for(unsigned int l=0 ; l< num_labels; ++l) 
+    for(unsigned int l=0 ; l< num_labels; ++l)
     {
-        lifs.read(pbuf+l,sizeof(char));            
+        lifs.read(pbuf+l,sizeof(char));
     }
 
     lifs.close();
 
     //2. Read MNIST images
     std::ifstream ifs;
-    ifs.open(mnist_images, std::ifstream::binary ); 
+    ifs.open(mnist_images, std::ifstream::binary );
 
     if(ifs.good() == false) {
-        std::string err_msg("Error reading: " + mnist_images); 
+        std::string err_msg("Error reading: " + mnist_images);
         throw std::runtime_error(err_msg.c_str());
     }
 
     // 2.1 Get Magic number and number of images and width and height of each image
     ifs.read(int_read,sizeof(uint32_t));
-    magic_number = block_to_int(int_read); 
+    magic_number = block_to_int(int_read);
     if( magic_number != mnist_images_magic_number ) {
-        std::string err_msg("Error reading MNIST Images eg. Wrong Magic number read: "); 
+        std::string err_msg("Error reading MNIST Images eg. Wrong Magic number read: ");
         err_msg += std::to_string(magic_number);
         throw std::runtime_error(err_msg);
     }
 
     // Get Number of images
     ifs.read(int_read,sizeof(uint32_t));
-    uint32_t num_images = block_to_int(int_read); 
+    uint32_t num_images = block_to_int(int_read);
 
     // Get images' width
     ifs.read(int_read,sizeof(uint32_t));
-    uint32_t images_width = block_to_int(int_read); 
+    uint32_t images_width = block_to_int(int_read);
 
     // Get images' height
     ifs.read(int_read,sizeof(uint32_t));
-    uint32_t images_height = block_to_int(int_read); 
+    uint32_t images_height = block_to_int(int_read);
 
     // 2.2 Get all images
     images = new nn::data<float, 3>(images_width, images_height, num_images);
-    std::unique_ptr<char[]> single_image(new char[images_height * images_width]);   
-    
+    std::unique_ptr<char[]> single_image(new char[images_height * images_width]);
+
     // Read all images (all at one) , scale its values from: <0-255> to <0.0 - 1.0>
     // as caffe training was processing data that way
     for(unsigned int img=0; img < num_images; ++img)
     {
-        ifs.read(single_image.get(),images_width*images_height*sizeof(char));    
+        ifs.read(single_image.get(),images_width*images_height*sizeof(char));
 
         float* pdata_image = (float*)images->buffer + img*images_width*images_height;   //?? is it safe
         for(unsigned int pix=0; pix < images_width*images_height; ++pix )
@@ -464,7 +628,7 @@ void nn_data_convert_float_to_int16_fixedpoint(nn::data<float> *in,
     auto outbuffer = static_cast<int16_t *>(out->buffer);
 
     for (size_t i = 0; i < N; ++i)
-        outbuffer[i] = inbuffer[i] * scale;
+        outbuffer[i] = static_cast<int16_t>(inbuffer[i] * scale);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -472,18 +636,18 @@ void nn_data_convert_float_to_int32_fixedpoint(nn::data<float> *in,
                                                         nn::data<int32_t> *out,
                                                         float scale){
     const size_t N = in->count();
-    auto  inbuffer = static_cast<float *>(in->buffer);
+    auto inbuffer = static_cast<float *>(in->buffer);
     auto outbuffer = static_cast<int32_t *>(out->buffer);
 
     for(size_t i=0;i<N;++i)
-        outbuffer[i] = inbuffer[i] * scale;
+        outbuffer[i] =  static_cast<int32_t>(inbuffer[i] * scale);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 nn::data<float, 4>*  nn_data_load_from_image_list_for_int16(    // Load of all data from a batch of image files
     std::vector<std::string>*  filelist,                                 // Pointer to vector contained a batch of filenames of images
-    uint16_t  std_size,                                                  // All images will be converted to uniform size -> std_size
-    uint16_t batching_size)                                              // A portion of the images must have a specific size
+    uint32_t  std_size,                                                  // All images will be converted to uniform size -> std_size
+    uint32_t batching_size)                                              // A portion of the images must have a specific size
     // supported formats: JPEG, J2K, JP2, PNG, BMP, WEBP, GIF, TIFF
 {
     auto data = new nn::data<float, 4>(3, std_size, std_size, batching_size);
@@ -491,10 +655,10 @@ nn::data<float, 4>*  nn_data_load_from_image_list_for_int16(    // Load of all d
     auto filelist_count = filelist->size();
 
     // Verifying that the images on the list is more than the size of batching
-    uint16_t  count = (filelist_count > batching_size) ? batching_size : filelist_count;
+    uint32_t  count = (filelist_count > batching_size) ? batching_size : static_cast<uint32_t>(filelist_count);
 
     // Read images from filelist vector
-    uint16_t i = 0;
+    uint32_t i = 0;
     std::vector<std::string>::iterator files_itr = filelist->begin();
     for (; i < count; ++i, ++files_itr) {
         FIBITMAP *bitmap = fi::load_image_from_file(files_itr->data());
@@ -506,9 +670,9 @@ nn::data<float, 4>*  nn_data_load_from_image_list_for_int16(    // Load of all d
             }
             bitmap = fi::crop_image_to_square_and_resize(bitmap, std_size);
             uint8_t Bpp = FreeImage_GetLine(bitmap) / std_size; // And now Bpp means Bytes per pixel
-            for (int y = 0; y < std_size; ++y) {
+            for (uint32_t y = 0; y < std_size; ++y) {
                 uint8_t *pixel = FreeImage_GetScanLine(bitmap, std_size - y - 1);
-                for (int x = 0; x < std_size; ++x) {
+                for (uint32_t x = 0; x < std_size; ++x) {
                     data->at(0, x, y, i) = pixel[FI_RGBA_RED];
                     data->at(1, x, y, i) = pixel[FI_RGBA_GREEN];
                     data->at(2, x, y, i) = pixel[FI_RGBA_BLUE];
@@ -518,9 +682,9 @@ nn::data<float, 4>*  nn_data_load_from_image_list_for_int16(    // Load of all d
             FreeImage_Unload(bitmap);
         }
         else {  // What, if reading bitmap failed? - Why not fill with zeros?
-            for (int y = 0; y < std_size; ++y) {
-                for (int x = 0; x < std_size; ++x) {
-                    for(int p = 0; p < 3; ++p) {
+            for (uint32_t y = 0; y < std_size; ++y) {
+                for (uint32_t x = 0; x < std_size; ++x) {
+                    for(uint32_t p = 0; p < 3; ++p) {
                         data->at(p, x, y, i) = 0;
                     }
                 }
@@ -529,9 +693,9 @@ nn::data<float, 4>*  nn_data_load_from_image_list_for_int16(    // Load of all d
     }
     // Fill with zero values, if number of  images are less than batching size
     for (; i < batching_size; ++i) {
-        for (int y = 0; y < std_size; ++y) {
-            for (int x = 0; x < std_size; ++x) {
-              for (int p = 0; p < 3;++p)
+        for (uint32_t y = 0; y < std_size; ++y) {
+            for (uint32_t x = 0; x < std_size; ++x) {
+              for (uint32_t p = 0; p < 3;++p)
                 data->at(i, x, y, p) = 0;
             }
         }

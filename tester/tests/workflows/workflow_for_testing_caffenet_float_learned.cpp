@@ -118,35 +118,44 @@ public:
         if(!is_valid()) throw std::runtime_error(error_);
 
         this->di = _di;
+        try {
+            // load nn:data factors (weights and biases) for successive layers
+            workflow_layer_factor[mean_factor]      = nn_data_load_from_file("weights_caffenet/imagenet_mean.nnd");
+            workflow_layer_factor[conv1_weights]    = nn_data_load_from_file("weights_caffenet/conv1_weights.nnd");
+            workflow_layer_factor[conv1_biases]     = nn_data_load_from_file("weights_caffenet/conv1_biases.nnd");
+            workflow_layer_factor[conv2_1_weights]  = nn_data_load_from_file("weights_caffenet/conv2_g1_weights.nnd");
+            workflow_layer_factor[conv2_1_biases]   = nn_data_load_from_file("weights_caffenet/conv2_g1_biases.nnd");
+            workflow_layer_factor[conv2_2_weights]  = nn_data_load_from_file("weights_caffenet/conv2_g2_weights.nnd");
+            workflow_layer_factor[conv2_2_biases]   = nn_data_load_from_file("weights_caffenet/conv2_g2_biases.nnd");
+            workflow_layer_factor[conv3_weights]    = nn_data_load_from_file("weights_caffenet/conv3_weights.nnd");
+            workflow_layer_factor[conv3_biases]     = nn_data_load_from_file("weights_caffenet/conv3_biases.nnd");
+            workflow_layer_factor[conv4_1_weights]  = nn_data_load_from_file("weights_caffenet/conv4_g1_weights.nnd");
+            workflow_layer_factor[conv4_1_biases]   = nn_data_load_from_file("weights_caffenet/conv4_g1_biases.nnd");
+            workflow_layer_factor[conv4_2_weights]  = nn_data_load_from_file("weights_caffenet/conv4_g2_weights.nnd");
+            workflow_layer_factor[conv4_2_biases]   = nn_data_load_from_file("weights_caffenet/conv4_g2_biases.nnd");
+            workflow_layer_factor[conv5_1_weights]  = nn_data_load_from_file("weights_caffenet/conv5_g1_weights.nnd");
+            workflow_layer_factor[conv5_1_biases]   = nn_data_load_from_file("weights_caffenet/conv5_g1_biases.nnd");
+            workflow_layer_factor[conv5_2_weights]  = nn_data_load_from_file("weights_caffenet/conv5_g2_weights.nnd");
+            workflow_layer_factor[conv5_2_biases]   = nn_data_load_from_file("weights_caffenet/conv5_g2_biases.nnd");
+            workflow_layer_factor[fc6_weights]      = nn_data_load_from_file("weights_caffenet/fc6_weights.nnd");
+            workflow_layer_factor[fc6_biases]       = nn_data_load_from_file("weights_caffenet/fc6_biases.nnd");
+            workflow_layer_factor[fc7_weights]      = nn_data_load_from_file("weights_caffenet/fc7_weights.nnd");
+            workflow_layer_factor[fc7_biases]       = nn_data_load_from_file("weights_caffenet/fc7_biases.nnd");
+            workflow_layer_factor[fc8_weights]      = nn_data_load_from_file("weights_caffenet/fc8_weights.nnd");
+            workflow_layer_factor[fc8_biases]       = nn_data_load_from_file("weights_caffenet/fc8_biases.nnd");
 
-        // load nn:data factors (weights and biases) for successive layers
-        workflow_layer_factor[mean_factor] = nn_data_load_from_file("weights_caffenet/imagenet_mean.nnd");
-        workflow_layer_factor[conv1_weights] = nn_data_load_from_file("weights_caffenet/conv1.nnd");
-        workflow_layer_factor[conv1_biases] = nn_data_load_from_file("weights_caffenet/conv1_bias.nnd");
-        workflow_layer_factor[conv2_1_weights] = nn_data_load_from_file("weights_caffenet/conv2_g1.nnd");
-        workflow_layer_factor[conv2_1_biases] = nn_data_load_from_file("weights_caffenet/conv2_bias_g1.nnd");
-        workflow_layer_factor[conv2_2_weights] = nn_data_load_from_file("weights_caffenet/conv2_g2.nnd");
-        workflow_layer_factor[conv2_2_biases] = nn_data_load_from_file("weights_caffenet/conv2_bias_g2.nnd");
-        workflow_layer_factor[conv3_weights] = nn_data_load_from_file("weights_caffenet/conv3.nnd");
-        workflow_layer_factor[conv3_biases] = nn_data_load_from_file("weights_caffenet/conv3_bias.nnd");
-        workflow_layer_factor[conv4_1_weights] = nn_data_load_from_file("weights_caffenet/conv4_g1.nnd");
-        workflow_layer_factor[conv4_1_biases] = nn_data_load_from_file("weights_caffenet/conv4_bias_g1.nnd");
-        workflow_layer_factor[conv4_2_weights] = nn_data_load_from_file("weights_caffenet/conv4_g2.nnd");
-        workflow_layer_factor[conv4_2_biases] = nn_data_load_from_file("weights_caffenet/conv4_bias_g2.nnd");
-        workflow_layer_factor[conv5_1_weights] = nn_data_load_from_file("weights_caffenet/conv5_g1.nnd");
-        workflow_layer_factor[conv5_1_biases] = nn_data_load_from_file("weights_caffenet/conv5_bias_g1.nnd");
-        workflow_layer_factor[conv5_2_weights] = nn_data_load_from_file("weights_caffenet/conv5_g2.nnd");
-        workflow_layer_factor[conv5_2_biases] = nn_data_load_from_file("weights_caffenet/conv5_bias_g2.nnd");
-        workflow_layer_factor[fc6_weights] = nn_data_load_from_file("weights_caffenet/fc6.nnd");
-        workflow_layer_factor[fc6_biases] = nn_data_load_from_file("weights_caffenet/fc6_bias.nnd");
-        workflow_layer_factor[fc7_weights] = nn_data_load_from_file("weights_caffenet/fc7.nnd");
-        workflow_layer_factor[fc7_biases] = nn_data_load_from_file("weights_caffenet/fc7_bias.nnd");
-        workflow_layer_factor[fc8_weights] = nn_data_load_from_file("weights_caffenet/fc8.nnd");
-        workflow_layer_factor[fc8_biases] = nn_data_load_from_file("weights_caffenet/fc8_bias.nnd");
-
-        for (auto wlf : workflow_layer_factor)
-            if (wlf == nullptr)
-                std::runtime_error("One or more of workflow factor was not loaded");
+            for(auto& wlf : workflow_layer_factor)
+               if(wlf == nullptr) {
+                   throw std::runtime_error("One or more of workflow factor was not loaded");
+               }
+        }
+        catch(std::runtime_error &e) {
+            std::cerr << "runtime_error: " << e.what() <<std::endl;
+            return workflow;
+        }
+        catch (...) {
+            return workflow;
+        }
 
         di->workflow_create_function(&workflow,1,1);
         // ------------------------------------------------------------------------------------------

@@ -1875,7 +1875,7 @@ convolve_AlexNet_C1 (
     float in[30];   // this holds a 19x24 block of the input data, enough to compute 4x3 outputs, simd_shuffle is used so that all work-items have access to all 19x24 locations.
     float out[12]; // 4x3 block of outputs that is SIMD_SIZE deep (along the Feature Map dimension).
     for(int i=0;i<12;i++)
-    { 
+    {
         // we need this address calculation for biases because we support views and batching
         out[i] = biases[(fm - get_global_offset(2)) % _OD];
     }
@@ -2062,7 +2062,7 @@ convolve_simd16(  // __global float *inputs, __global float* weights, __global f
     uint in_addr;
 
     // find weights adress of given neuron (lid is index)
-    uint weight_addr = (fmg % (_OD/SIMD_SIZE)) * INPUT_DEPTH * KERNEL * KERNEL * SIMD_SIZE + lid;   
+    uint weight_addr = (fmg % (_OD/SIMD_SIZE)) * INPUT_DEPTH * KERNEL * KERNEL * SIMD_SIZE + lid;
 
     for(int i=0;i<OUT_BLOCK_SIZE;i++) {
         out[i]=0.0f;
@@ -2116,7 +2116,7 @@ convolve_simd16(  // __global float *inputs, __global float* weights, __global f
     uint out_addr = ( num_in_batch * TOTAL_OUTPUT_DEPTH  + (fm % _OD) + get_global_offset(2) ) * (_OW + OWPAD) * (_OH + OHPAD); // out_addr indexes into start of 16 feature maps.
 #else
     // we need this address calculation for outputs because we support views and batching
-    uint out_addr = OUT_BUFF_OFFSET + ( num_in_batch * TOTAL_OUTPUT_DEPTH  + (fm % _OD) + get_global_offset(2) ) * (_OW + OWPAD) * (_OH + OHPAD); 
+    uint out_addr = OUT_BUFF_OFFSET + ( num_in_batch * TOTAL_OUTPUT_DEPTH  + (fm % _OD) + get_global_offset(2) ) * (_OW + OWPAD) * (_OH + OHPAD);
 #endif
 
     out_addr += or * (_OW + OWPAD) + oc;  // offset for the 4x3 block that this workitem is working on;
@@ -2235,7 +2235,7 @@ convolve_simd8(  // __global float *inputs, __global float* weights, __global fl
     uint in_addr;
     uint weight_addr = (fmg % (_OD/SIMD_SIZE)) * _ID * KERNEL * KERNEL * SIMD_SIZE + lid;
 
-    for(int i=0;i<OUT_BLOCK_SIZE;i++) 
+    for(int i=0;i<OUT_BLOCK_SIZE;i++)
     {
         // we need this address calculation for biases because we support views and batching
         out[i] = biases[(fm - get_global_offset(2)) % _OD];
@@ -2290,14 +2290,14 @@ convolve_simd8(  // __global float *inputs, __global float* weights, __global fl
              // simd8, so 9th input read  separately
 #if OUT_BLOCK_WIDTH==7
              in_addr = input_batch_offset + (kd + INPUT_START_Z)  * (_IH + IHPAD) * (_IW + IWPAD) + (or * K_STRIDE + kr) * (_IW + IWPAD) + (oc * K_STRIDE) + 8;
-#endif 
+#endif
              for(int br=0; br < OUT_BLOCK_HEIGHT; br++) {
                    const int bc = OUT_BLOCK_WIDTH-1;
 #if OUT_BLOCK_WIDTH==7
                    float input = inputs[in_addr];
 #else
                    float input = intel_sub_group_shuffle( in[br * K_STRIDE + kr], bc * K_STRIDE + kc);
-#endif				   
+#endif
                    in_addr += (_IW + IWPAD);  // move to next row down
                    out[br * OUT_BLOCK_WIDTH + bc] = mad(w[w_idx % WEIGHT_PREF], input, out[br * OUT_BLOCK_WIDTH + bc]);
                 }
@@ -2314,7 +2314,7 @@ convolve_simd8(  // __global float *inputs, __global float* weights, __global fl
 
 
     // we need this address calculation for outputs because we support views and batching
-    uint out_addr = OUT_BUFF_OFFSET + ( num_in_batch * TOTAL_OUTPUT_DEPTH  + (fm % _OD) + get_global_offset(2) ) * (_OW + OWPAD) * (_OH + OHPAD); 
+    uint out_addr = OUT_BUFF_OFFSET + ( num_in_batch * TOTAL_OUTPUT_DEPTH  + (fm % _OD) + get_global_offset(2) ) * (_OW + OWPAD) * (_OH + OHPAD);
 
     out_addr += or * (_OW + OWPAD) + oc;  // offset for the 4x3 block that this workitem is working on;
 

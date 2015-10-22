@@ -34,7 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #if defined _MSC_VER
 #   pragma pack(push,1)
-typedef struct 
+typedef struct
 #else
 typedef struct __attribute__((packed))
 #endif
@@ -62,7 +62,7 @@ nn_data {
 #       define va_copy(a,b) __va_copy(a,b)
 #   else
 #       define va_copy(a,b) ((a)=(b))
-#   endif 
+#   endif
 #endif
 
 /* internal code; do not call directly */
@@ -92,7 +92,7 @@ static inline size_t nn_data_buffer_size(
 }
 
 
-/* calculate size of buffer, sizes in array 
+/* calculate size of buffer, sizes in array
    examples:
      size_t sizes[3] = {2, 3, 4};
      nn_data_buffer_size_ptr(sizeof(float), sizeof(sizes)/sizeof(sizes[0]), sizes);
@@ -181,7 +181,7 @@ static inline nn_data_t *nn_data_create(
     nn_data_t *data = (nn_data_t *)malloc(sizeof(nn_data_t));
     va_start(list, dimension);
     buffer_size = nn_data_buffer_size(sizeof_value, dimension, list);
-    result = buffer_size ? internal_nn_data_create(data, buffer_size, 0, sizeof_value, dimension, list) : 0; 
+    result = buffer_size ? internal_nn_data_create(data, buffer_size, 0, sizeof_value, dimension, list) : 0;
     va_end(list);
     if(!result) free(data);
     return result;
@@ -206,7 +206,7 @@ static inline nn_data_t *nn_data_create_ptr(
     size_t buffer_size;
     nn_data_t *data = (nn_data_t *)malloc(sizeof(nn_data_t));
     buffer_size = nn_data_buffer_size_ptr(sizeof_value, dimension, size_ptr);
-    result = buffer_size ? internal_nn_data_create_ptr(data, buffer_size, 0, sizeof_value, dimension, size_ptr) : 0; 
+    result = buffer_size ? internal_nn_data_create_ptr(data, buffer_size, 0, sizeof_value, dimension, size_ptr) : 0;
     if(!result) free(data);
     return result;
 }
@@ -402,7 +402,7 @@ static inline TYPE *nn_data_##TYPE##_at(nn_data_t *data, uint8_t dimension, ...)
     } \
 }
 
-/* nn_data_[type]_ptr convenience functions 
+/* nn_data_[type]_ptr convenience functions
    They allow
    "*nn_data_uint8_t_at(...) = 5 syntax", but are minimally slower than
    "*(uint8_t*)nn_data_at(...) = 5" because added type size validation.
@@ -532,13 +532,13 @@ namespace nn {
         struct {
             // return size in specified dimension
             size_t operator[](size_t index) const {
-                auto base = get_base(); 
+                auto base = get_base();
                 if(index<base->dimension) return base->nn_data_t::size[index];
                 else throw std::out_of_range("nn::data<T_type, T_dimension>::size operator[]");
             }
             // return size buffer
             explicit operator const size_t* const() const {
-                auto base = get_base(); 
+                auto base = get_base();
                 return base->nn_data_t::size;
             }
         private:

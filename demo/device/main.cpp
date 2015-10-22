@@ -101,6 +101,13 @@ R"_help_( <parameters> input_dir
     --config=<name>
         file name of config file containing additional parameters
         command line parameters take priority over config ones
+    --save_reference
+        Save softmax output for each image in txt format
+        Reference's filename will the same as image's name
+    --use_jit_primitives
+        Enable usage of faster jit primitives.
+        Will work only with classification (forward primitives)
+        and batch, that is multiplication of 24
 
 If last parameters do not fit --key=value format it is assumed to be a --input.
 Instead of "--" "-" or "/" can be used.
@@ -135,8 +142,8 @@ Instead of "--" "-" or "/" can be used.
                 config["device"]="device_cpu";
                 if(config.find("batch") ==not_found) config["batch"]="48";
             }
-            else 
-            {  
+            else
+            {
                 if( config.find("batch") == not_found)
                 {
                     config["batch"] = (config["device"] == "device_cpu" ? "48" : "32");
@@ -146,7 +153,6 @@ Instead of "--" "-" or "/" can be used.
             if(config.find("input") ==not_found) throw std::runtime_error("missing input directory; run without arguments to get help");
             if(config.find("loops") ==not_found) config["loops"]="1";
         }
-
 
         // RAII for loading library, device initialization and opening interface 0
         scoped_library      library(config["device"]+dynamic_library_extension);
@@ -158,7 +164,7 @@ Instead of "--" "-" or "/" can be used.
         // If training is to happen then builder of training should be chosen
         if( config.find("training") != std::end(config))
         {
-            builder_desc += "_training"; 
+            builder_desc += "_training";
         }
         // get workflow builder as specified by model parameter
         auto builder = workflow_builder::instance().get(builder_desc);
@@ -167,23 +173,18 @@ Instead of "--" "-" or "/" can be used.
 
         if(config_batch<=0) throw std::runtime_error("batch_size is 0 or negative");
         nn_workflow_t *workflow = builder->init_workflow(&interface_0);
-
-        // compiling workload
-        NN_WORKLOAD_DATA_TYPE input_format; 
-
-        // lenet topology works with MNIST so input is 2D greyscaled images
-        if( config["model"].compare("lenet_float") == 0 )
-        {
-            input_format = NN_WORKLOAD_DATA_TYPE_F32_2D_BATCH;
-        } 
-        else
-        {
-            input_format = NN_WORKLOAD_DATA_TYPE_F32_ZXY_BATCH;
-        }
-        NN_WORKLOAD_DATA_TYPE output_format = NN_WORKLOAD_DATA_TYPE_F32_1D_BATCH;
         nn_workload_t *workload = nullptr;
         C_time_control timer;
-        auto status = interface_0.workflow_compile_function(&workload, interface_0.device, workflow, &input_format, &output_format, config_batch);
+        if (config.find("use_jit_primitives") != config.end())
+            interface_0.use_jit_primitives(1);
+        auto status = interface_0.workflow_compile_function(
+            &workload,
+            interface_0.device,
+            workflow,
+            builder->get_input_formats(),
+            builder->get_output_formats(),
+            config_batch);
+
         timer.tock();
         if(!workload) throw std::runtime_error("workload compilation failed");
         std::cout << "workload compiled in " << timer.time_diff_string() <<" [" <<timer.clocks_diff_string() <<"]" << std::endl;
@@ -195,27 +196,35 @@ Instead of "--" "-" or "/" can be used.
             if( config["model"].compare("lenet_float") == 0 )
             {
                 run_mnist_classification(library,device,interface_0,workload,builder,argv,config,config_batch);
-            } else
+            }
+            else
             {
                 run_images_classification(library,device,interface_0,workload,builder,argv,config,config_batch);
             }
-        } else {
+        }
+        else
+        {
             if( config["model"].compare("lenet_float") == 0 )
             {
                 run_mnist_training(library,device,interface_0,workload,builder,argv,config,config_batch);
-            } else {
-                printf("TODO: :)\n");
+            }
+            else
+            {
+                run_images_training(library,device,interface_0,workload,builder,argv,config,config_batch);
             }
         }
-
     return 0;
     }
     catch(std::runtime_error &error) {
         std::cout << "error: " << error.what() << std::endl;
         return -1;
     }
+    catch(std::exception &e) {
+        std::cerr << e.what();
+        return -1;
+    }
     catch(...) {
-        std::cout << "unknown error" << std::endl;
+        std::cout << "error: unknown" << std::endl;
         return -1;
     }
 }

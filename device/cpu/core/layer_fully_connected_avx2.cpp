@@ -66,8 +66,8 @@ void fully_connected_compute_block_batch8(
     // due to compiler which have issues with register allocation
     // and needs special, obvious treatment. Template immediate
     // arguments matching will remove all conditions in this code.
-    __m256  acc0, acc1, acc2, acc3, acc4, 
-            acc5, acc6, acc7, acc8, acc9, 
+    __m256  acc0, acc1, acc2, acc3, acc4,
+            acc5, acc6, acc7, acc8, acc9,
             acc10, acc11, acc12, acc13, acc14;
 
     if (T_NEED_BIAS_COPY)
@@ -195,10 +195,10 @@ void fully_connected_compute_block_batch8(
 }
 
 template <NN_ACTIVATION_FUNCTION T_FUNCTION, bool T_NEED_BIAS_COPY>
-void fully_connected_f32::run_fully_connected_work_item_internal_batch8(const nn::workload_data<float> *input,
-                                                                        const nn::workload_data<float> *weights,
-                                                                        const nn::workload_data<float> *bias,
-                                                                        nn::workload_data<float> *output) {
+void fully_connected_f32::run_fully_connected_work_item_internal_batch8(const nn::workload_data<> *input,
+                                                                        const nn::workload_data<> *weights,
+                                                                        const nn::workload_data<> *bias,
+                                                                        nn::workload_data<> *output) {
     const auto input_width = input->parent->lengths.t[NN_DATA_COORD_x];
     const auto output_width = output->view_end.t[NN_DATA_COORD_x] - output->view_begin.t[NN_DATA_COORD_x] + 1;
 
@@ -276,8 +276,8 @@ inline void fully_connected_compute_block_batch48(
     // due to compiler which have issues with register allocation
     // and needs special, obvious treatment. Template immediate
     // arguments matching will remove all conditions in this code.
-    __m256  acc0, acc1, acc2, acc3, acc4, 
-            acc5, acc6, acc7, acc8, acc9, 
+    __m256  acc0, acc1, acc2, acc3, acc4,
+            acc5, acc6, acc7, acc8, acc9,
             acc10, acc11;
 
     if (first_run)
@@ -363,12 +363,12 @@ inline void fully_connected_compute_block_batch48(
         __m256 input = _mm256_load_ps(input_ptr + 0 * C_simd_width);
         if (T_SIZE >= 1)  acc0 = _mm256_fmadd_ps(input, weights0,  acc0);
         if (T_SIZE >= 2)  acc6 = _mm256_fmadd_ps(input, weights1,  acc6);
-                                                                   
-        input = _mm256_load_ps(input_ptr + 1 * C_simd_width);     
+
+        input = _mm256_load_ps(input_ptr + 1 * C_simd_width);
         if (T_SIZE >= 1)  acc1 = _mm256_fmadd_ps(input, weights0,  acc1);
         if (T_SIZE >= 2)  acc7 = _mm256_fmadd_ps(input, weights1,  acc7);
-                                                                   
-        input = _mm256_load_ps(input_ptr + 2 * C_simd_width);     
+
+        input = _mm256_load_ps(input_ptr + 2 * C_simd_width);
         if (T_SIZE >= 1)  acc2 = _mm256_fmadd_ps(input, weights0,  acc2);
         if (T_SIZE >= 2)  acc8 = _mm256_fmadd_ps(input, weights1,  acc8);
 
@@ -383,7 +383,7 @@ inline void fully_connected_compute_block_batch48(
         input = _mm256_load_ps(input_ptr + 5 * C_simd_width);
         if (T_SIZE >= 1)  acc5 = _mm256_fmadd_ps(input, weights0,  acc5);
         if (T_SIZE >= 2) acc11 = _mm256_fmadd_ps(input, weights1, acc11);
-        
+
         // Increment pointers.
         input_ptr += C_batch48_size;
         weights_buffer += C_max_acc_batch48;
@@ -466,10 +466,10 @@ inline void fully_connected_compute_block_batch48(
 }
 
 template <NN_ACTIVATION_FUNCTION T_FUNCTION, bool T_NEED_BIAS_COPY>
-void fully_connected_f32::run_fully_connected_work_item_internal_batch48(const nn::workload_data<float> *input,
-                                                                         const nn::workload_data<float> *weights,
-                                                                         const nn::workload_data<float> *bias,
-                                                                         nn::workload_data<float> *output) {
+void fully_connected_f32::run_fully_connected_work_item_internal_batch48(const nn::workload_data<> *input,
+                                                                         const nn::workload_data<> *weights,
+                                                                         const nn::workload_data<> *bias,
+                                                                         nn::workload_data<> *output) {
     const auto input_width = input->parent->lengths.t[NN_DATA_COORD_x];
     const auto output_width = output->view_end.t[NN_DATA_COORD_x] - output->view_begin.t[NN_DATA_COORD_x] + 1;
 
@@ -495,7 +495,7 @@ void fully_connected_f32::run_fully_connected_work_item_internal_batch48(const n
 
     const auto num_input_packages = input_width / C_package_size;
     const auto package_remainder = input_width % C_package_size;
-    
+
     bool first_run = true;
 
     float* bias_ptr = nullptr;
@@ -504,11 +504,11 @@ void fully_connected_f32::run_fully_connected_work_item_internal_batch48(const n
         auto biases_buffer = static_cast<float*>(bias->parent->data_buffer);
         bias_ptr = &biases_buffer[output_view_start];
     }
-    
+
     // Full packages.
     for (auto input_package = 0u; input_package < num_input_packages; ++input_package)
     {
-        const bool last_run = 
+        const bool last_run =
             (package_remainder > 0 || input_package + 1 < num_input_packages) ? false : true;
         auto package_weights_ptr = weights_ptr;
         auto package_output_ptr = output_ptr;
@@ -518,7 +518,7 @@ void fully_connected_f32::run_fully_connected_work_item_internal_batch48(const n
             // Run computation.
             fully_connected_compute_block_batch48<C_max_acc_batch48, T_FUNCTION, T_NEED_BIAS_COPY>(
                         input_buffer + C_package_size * C_batch48_size * input_package,
-                        package_output_ptr, 
+                        package_output_ptr,
                         package_bias_ptr,
                         package_weights_ptr + C_package_size * C_max_acc_batch48 * input_package,
                         C_package_size,
@@ -618,8 +618,8 @@ void fully_connected_compute_block_latency(
     // due to compiler which have issues with register allocation
     // and needs special, obvious treatment. Template immediate
     // arguments matching will remove all conditions in this code.
-    __m256  acc0, acc1, acc2, acc3, acc4, 
-            acc5, acc6, acc7, acc8, acc9, 
+    __m256  acc0, acc1, acc2, acc3, acc4,
+            acc5, acc6, acc7, acc8, acc9,
             acc10, acc11, acc12, acc13, acc14;
 
     if (T_NEED_BIAS_COPY)
@@ -811,10 +811,10 @@ void fully_connected_compute_subsimd_latency(
 }
 
 template <NN_ACTIVATION_FUNCTION T_FUNCTION, bool T_NEED_BIAS_COPY>
-void fully_connected_f32::run_fully_connected_work_item_internal_latency(const nn::workload_data<float> *input,
-                                                                         const nn::workload_data<float> *weights,
-                                                                         const nn::workload_data<float> *bias,
-                                                                         nn::workload_data<float> *output) {
+void fully_connected_f32::run_fully_connected_work_item_internal_latency(const nn::workload_data<> *input,
+                                                                         const nn::workload_data<> *weights,
+                                                                         const nn::workload_data<> *bias,
+                                                                         nn::workload_data<> *output) {
     const auto input_width = input->parent->lengths.t[NN_DATA_COORD_x];
     const auto output_width = output->view_end.t[NN_DATA_COORD_x] - output->view_begin.t[NN_DATA_COORD_x] + 1;
     const auto output_length = output->parent->lengths.t[NN_DATA_COORD_x];
@@ -883,10 +883,10 @@ void fully_connected_f32::run_fully_connected_work_item_internal_latency(const n
 }
 
 template <NN_ACTIVATION_FUNCTION T_FUNCTION, bool T_NEED_BIAS_COPY>
-void fully_connected_f32::choose_fully_connected_work_item_batching_mode(const nn::workload_data<float> *input,
-                                                                         const nn::workload_data<float> *weights,
-                                                                         const nn::workload_data<float> *bias,
-                                                                         nn::workload_data<float> *output) {
+void fully_connected_f32::choose_fully_connected_work_item_batching_mode(const nn::workload_data<> *input,
+                                                                         const nn::workload_data<> *weights,
+                                                                         const nn::workload_data<> *bias,
+                                                                         nn::workload_data<> *output) {
     switch (batch_size)
     {
     case 1:
@@ -904,10 +904,10 @@ void fully_connected_f32::choose_fully_connected_work_item_batching_mode(const n
 }
 
 template <bool T_NEED_BIAS_COPY>
-void fully_connected_f32::choose_fully_connected_work_item_activation(const nn::workload_data<float> *input,
-                                                                      const nn::workload_data<float> *weights,
-                                                                      const nn::workload_data<float> *bias,
-                                                                      nn::workload_data<float> *output) {
+void fully_connected_f32::choose_fully_connected_work_item_activation(const nn::workload_data<> *input,
+                                                                      const nn::workload_data<> *weights,
+                                                                      const nn::workload_data<> *bias,
+                                                                      nn::workload_data<> *output) {
     switch (activation.function)
     {
     case NN_ACTIVATION_FUNCTION_NONE:
@@ -921,10 +921,10 @@ void fully_connected_f32::choose_fully_connected_work_item_activation(const nn::
     }
 }
 
-void fully_connected_f32::run_fully_connected_work_item(const nn::workload_data<float> *input,
-                                                        const nn::workload_data<float> *weights,
-                                                        const nn::workload_data<float> *bias,
-                                                        nn::workload_data<float> *output) {
+void fully_connected_f32::run_fully_connected_work_item(const nn::workload_data<> *input,
+                                                        const nn::workload_data<> *weights,
+                                                        const nn::workload_data<> *bias,
+                                                        nn::workload_data<> *output) {
     bool need_bias_copy = (bias != nullptr);
 
     if (need_bias_copy)
@@ -940,56 +940,56 @@ void fully_connected_f32::run_fully_connected_work_item(const nn::workload_data<
 std::vector<nn_workload_data_t *> fully_connected_f32::create_parameters(bool allocate_delta)
 {
     if(batch_size == 1){
-        return{nn::data_helper<NN_WORKLOAD_DATA_TAG_OI, float>::create(device, num_input, num_output, allocate_delta),
-                nn::data_helper<NN_WORKLOAD_DATA_TAG_O, float>::create(device, num_output, allocate_delta)};
+        return{nn::data_helper<NN_WORKLOAD_DATA_TAG_OI, nn::layout_oi_f32>::create(device, num_input, num_output, allocate_delta),
+                nn::data_helper<NN_WORKLOAD_DATA_TAG_O, nn::layout_o_f32>::create(device, num_output, allocate_delta)};
     }
     else{
         const uint32_t C_max_accumulators = (batch_size == 8) ? 13 : 2;
-        return {nn::data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIO, float>::create(
+        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIO, nn::layout_oblockio_f32>::create(
                     device, C_max_accumulators, num_input, num_output, allocate_delta),
-                nn::data_helper<NN_WORKLOAD_DATA_TAG_O, float>::create(device, num_output, allocate_delta)};
+                    nn::data_helper<NN_WORKLOAD_DATA_TAG_O, nn::layout_o_f32>::create(device, num_output, allocate_delta)};
     }
 }
 
 std::vector<nn_workload_data_t *> fully_connected_f32::create_inputs(bool allocate_delta)
 {
-    return {nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, float>::create(device, num_input, batch_size, allocate_delta)};
+    return {nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, nn::layout_nx_f32>::create(device, num_input, batch_size, allocate_delta)};
 }
 
 std::vector<nn_workload_data_t *> fully_connected_f32::create_outputs(bool allocate_delta)
 {
-    return {nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, float>::create(device, num_output, batch_size, allocate_delta)};
+    return {nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, nn::layout_nx_f32>::create(device, num_output, batch_size, allocate_delta)};
 }
 
-const nn_workload_data_layout_t& fully_connected_f32::in_out_layout = nn::workload_data<float>::layout.nxyzpq;
+const nn_workload_data_layout_t& fully_connected_f32::in_out_layout = nn::layout_t<nn::layout_nxyzpq_f32>::layout;
 
 struct fully_connected_f32_request_handle {
     fully_connected_f32 *primitive;
-    const nn::workload_data<float> *input;
-    const nn::workload_data<float> *weights;
-    const nn::workload_data<float> *bias;
-    nn::workload_data<float> *output;
+    const nn::workload_data<> *input;
+    const nn::workload_data<> *weights;
+    const nn::workload_data<> *bias;
+    nn::workload_data<> *output;
 };
 
 struct fully_connected_f32_backward_input_request_handle {
     fully_connected_f32 *primitive;
-    const nn::workload_data<float> *backward_input;
-    const nn::workload_data<float> *forward_weights;
-    nn::workload_data<float> *output;
+    const nn::workload_data<> *backward_input;
+    const nn::workload_data<> *forward_weights;
+    nn::workload_data<> *output;
 };
 
 struct fully_connected_f32_backward_weight_request_handle {
     fully_connected_f32 *primitive;
-    const nn::workload_data<float> *forward_input;
-    const nn::workload_data<float> *backward_input;
-    nn::workload_data<float> *output;
+    const nn::workload_data<> *forward_input;
+    const nn::workload_data<> *backward_input;
+    nn::workload_data<> *output;
 };
 
 struct fully_connected_f32_backward_bias_request_handle {
     fully_connected_f32 *primitive;
-    const nn::workload_data<float> *backward_input;
-    const nn::workload_data<float> *bias_multiplier;
-    nn::workload_data<float> *output;
+    const nn::workload_data<> *backward_input;
+    const nn::workload_data<> *bias_multiplier;
+    nn::workload_data<> *output;
 };
 
 void sum_over_simd(__m256& acc)
@@ -1001,9 +1001,9 @@ void sum_over_simd(__m256& acc)
 }
 
 void run_backward_weights_delta(
-    const nn::workload_data<float> *forward_input_view,
-    const nn::workload_data<float> *forward_output_view,
-    nn::workload_data<float> *forward_weights_delta_view)
+    const nn::workload_data<> *forward_input_view,
+    const nn::workload_data<> *forward_output_view,
+    nn::workload_data<> *forward_weights_delta_view)
 {
     const auto& in_begin = forward_input_view->view_begin;
     const auto& in_end = forward_input_view->view_end;
@@ -1013,10 +1013,10 @@ void run_backward_weights_delta(
     const auto& wght_begin = forward_weights_delta_view->view_begin;
     const auto& wght_end = forward_weights_delta_view->view_end;
 
-    nn::workload_data<float> forward_input_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_input_view->parent->data_buffer, forward_input_view->parent->lengths, forward_input_view->parent->layout);
-    nn::workload_data<float> backward_input_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_output_view->parent->delta_buffer, forward_output_view->parent->lengths, forward_output_view->parent->layout);
-    nn::workload_data<float> backward_weights_delta_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_weights_delta_view->parent->delta_buffer, forward_weights_delta_view->parent->lengths, forward_weights_delta_view->parent->layout);
-    
+    nn::workload_data<nn::layout_f32> forward_input_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_input_view->parent->data_buffer, forward_input_view->parent->lengths, forward_input_view->parent->layout);
+    nn::workload_data<nn::layout_f32> backward_input_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_output_view->parent->delta_buffer, forward_output_view->parent->lengths, forward_output_view->parent->layout);
+    nn::workload_data<nn::layout_f32> backward_weights_delta_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_weights_delta_view->parent->delta_buffer, forward_weights_delta_view->parent->lengths, forward_weights_delta_view->parent->layout);
+
     auto batch_size = forward_input_buffer.parent->lengths.t[NN_DATA_COORD_n];
 
     const uint32_t C_max_accumulators = (batch_size == 8) ? 13 : 2;
@@ -1046,7 +1046,7 @@ void run_backward_weights_delta(
                 }
 
                 backward_weights_delta_buffer(0, input_element, output_element, 0, 0, 0) = acc;
-            }            
+            }
         }
     }
     else if(batch_size == 8)
@@ -1074,7 +1074,7 @@ void run_backward_weights_delta(
                     }
 
                     backward_weights_delta_buffer(0, input_element, 0, 0, output_minor_element, output_major_element) = acc;
-                }            
+                }
             }
         }
     }
@@ -1133,15 +1133,15 @@ void run_backward_weights_delta(
 
                     backward_weights_delta_ptr_adjusted += C_max_accumulators;
                     forward_input_ptr_adjusted += C_batch48_size;
-                }            
+                }
             }
         }
     }
 }
 
 template <uint32_t T_block_size>
-void backward_bias_delta_inner_loop_batch48( 
-    float* backward_input_buffer, 
+void backward_bias_delta_inner_loop_batch48(
+    float* backward_input_buffer,
     float* backward_bias_delta_buffer)
 {
     const auto C_batch = 48;
@@ -1188,9 +1188,9 @@ void backward_bias_delta_inner_loop_batch48(
 }
 
 void run_backward_bias_delta(
-    const nn::workload_data<float> *forward_output_view,
-    const nn::workload_data<float> *bias_multiplier,
-    nn::workload_data<float> *forward_bias_delta_view)
+    const nn::workload_data<> *forward_output_view,
+    const nn::workload_data<> *bias_multiplier,
+    nn::workload_data<> *forward_bias_delta_view)
 {
     const auto& in_begin = forward_output_view->view_begin;
     const auto& in_end = forward_output_view->view_end;
@@ -1209,11 +1209,11 @@ void run_backward_bias_delta(
     // Naive default version.
     if(batch_size != 48)
     {
-        nn::workload_data<float> backward_input_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_output_view->parent->delta_buffer, forward_output_view->parent->lengths, forward_output_view->parent->layout);
-        nn::workload_data<float> backward_bias_delta_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_bias_delta_view->parent->delta_buffer, forward_bias_delta_view->parent->lengths, forward_bias_delta_view->parent->layout);
+        nn::workload_data<nn::layout_f32> backward_input_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_output_view->parent->delta_buffer, forward_output_view->parent->lengths, forward_output_view->parent->layout);
+        nn::workload_data<nn::layout_f32> backward_bias_delta_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_bias_delta_view->parent->delta_buffer, forward_bias_delta_view->parent->lengths, forward_bias_delta_view->parent->layout);
 
         for (uint32_t output_element = out_begin.t[NN_DATA_COORD_x]; output_element <= out_end.t[NN_DATA_COORD_x]; ++output_element)
-        {    
+        {
             float acc = 0.0f;
 
             for (uint32_t batch = in_begin.t[NN_DATA_COORD_n];
@@ -1263,18 +1263,18 @@ void run_backward_bias_delta(
 }
 
 void run_backward_input_delta(
-    const nn::workload_data<float> *forward_output_view,
-    const nn::workload_data<float> *forward_weights_view,
-    nn::workload_data<float> *forward_input_view)
+    const nn::workload_data<> *forward_output_view,
+    const nn::workload_data<> *forward_weights_view,
+    nn::workload_data<> *forward_input_view)
 {
     const auto& in_begin = forward_output_view->view_begin;
     const auto& in_end = forward_output_view->view_end;
     const auto& out_begin = forward_input_view->view_begin;
     const auto& out_end = forward_input_view->view_end;
 
-    nn::workload_data<float> forward_weights_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_weights_view->parent->data_buffer, forward_weights_view->parent->lengths, forward_weights_view->parent->layout);
-    nn::workload_data<float> backward_input_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_output_view->parent->delta_buffer, forward_output_view->parent->lengths, forward_output_view->parent->layout);
-    nn::workload_data<float> backward_output_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_input_view->parent->delta_buffer, forward_input_view->parent->lengths, forward_input_view->parent->layout);
+    nn::workload_data<nn::layout_f32> forward_weights_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_weights_view->parent->data_buffer, forward_weights_view->parent->lengths, forward_weights_view->parent->layout);
+    nn::workload_data<nn::layout_f32> backward_input_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_output_view->parent->delta_buffer, forward_output_view->parent->lengths, forward_output_view->parent->layout);
+    nn::workload_data<nn::layout_f32> backward_output_buffer(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_input_view->parent->delta_buffer, forward_input_view->parent->lengths, forward_input_view->parent->layout);
 
     auto batch_size = forward_output_view->parent->lengths.t[NN_DATA_COORD_n];
 
@@ -1395,10 +1395,10 @@ void unpack_fully_connected_callback_handle_backward_input(void *void_handle) {
     run_backward_input_delta(handle->backward_input, handle->forward_weights, handle->output);
 }
 
-void fully_connected_f32::forward(const nn::workload_data<float> *input,
-                                  const nn::workload_data<float> *weights,
-                                  const nn::workload_data<float> *bias,
-                                  nn::workload_data<float> *output) {
+void fully_connected_f32::forward(const nn::workload_data<> *input,
+                                  const nn::workload_data<> *weights,
+                                  const nn::workload_data<> *bias,
+                                  nn::workload_data<> *output) {
     auto num_hardware_threads = std::min(device->thread_pool.get_num_threads(), max_threads);
 
     nn_workload_data_coords_t input_view_coords(
@@ -1419,10 +1419,10 @@ void fully_connected_f32::forward(const nn::workload_data<float> *input,
         1
     );
 
-    nn_workload_data_layout_t in_out_view_layout = nn::workload_data<float>::layout.nxyzpq;
+    nn_workload_data_layout_t in_out_view_layout = nn::layout_t<nn::layout_nxyzpq_f32>::layout;
 
-    nn::workload_data<float>* input_reinterpret = new nn::workload_data<float>(NN_WORKLOAD_DATA_TAG_UNKNOWN, input->parent->data_buffer, input_view_coords, in_out_view_layout);
-    nn::workload_data<float>* output_reinterpret = new nn::workload_data<float>(NN_WORKLOAD_DATA_TAG_UNKNOWN, output->parent->data_buffer, output_view_coords, in_out_view_layout);
+    nn::workload_data<>* input_reinterpret = new nn::workload_data<>(NN_WORKLOAD_DATA_TAG_UNKNOWN, input->parent->data_buffer, input_view_coords, in_out_view_layout);
+    nn::workload_data<>* output_reinterpret = new nn::workload_data<>(NN_WORKLOAD_DATA_TAG_UNKNOWN, output->parent->data_buffer, output_view_coords, in_out_view_layout);
 
 
     auto item_view_length = output_reinterpret->view_end.t[NN_DATA_COORD_x] - output_reinterpret->view_begin.t[NN_DATA_COORD_x] + 1;
@@ -1563,14 +1563,14 @@ void fully_connected_f32::forward(const nn::workload_data<float> *input,
                 output_reinterpret->get_length(NN_DATA_COORD_q) - 1
             );
 
-            request_handle.input = new nn::workload_data<float>(
-                *const_cast<nn::workload_data<float> *>(input_reinterpret), input_view_begin, input_view_end);
+            request_handle.input = new nn::workload_data<>(
+                *const_cast<nn::workload_data<> *>(input_reinterpret), input_view_begin, input_view_end);
 
-            request_handle.weights = new nn::workload_data<float>(
-                *const_cast<nn::workload_data<float> *>(weights), weights_view_begin, weights_view_end);
+            request_handle.weights = new nn::workload_data<>(
+                *const_cast<nn::workload_data<> *>(weights), weights_view_begin, weights_view_end);
 
-            request_handle.output = new nn::workload_data<float>(
-                *const_cast<nn::workload_data<float> *>(output_reinterpret), output_view_begin, output_view_end);
+            request_handle.output = new nn::workload_data<>(
+                *const_cast<nn::workload_data<> *>(output_reinterpret), output_view_begin, output_view_end);
 
             if (bias != nullptr)
             {
@@ -1591,8 +1591,8 @@ void fully_connected_f32::forward(const nn::workload_data<float> *input,
                     bias->get_length(NN_DATA_COORD_q) - 1
                 );
 
-                request_handle.bias = new nn::workload_data<float>(
-                    *const_cast<nn::workload_data<float> *>(bias), bias_view_begin, bias_view_end);
+                request_handle.bias = new nn::workload_data<>(
+                    *const_cast<nn::workload_data<> *>(bias), bias_view_begin, bias_view_end);
             }else{
                 request_handle.bias = nullptr;
             }
@@ -1633,10 +1633,10 @@ void fully_connected_f32::forward(const std::vector<const nn_workload_data_t *> 
     assert(parameters.size() == 2);
     assert(outputs.size() == 1);
 
-    forward(reinterpret_cast<const nn::workload_data<float> *>(inputs[0]),
-            reinterpret_cast<const nn::workload_data<float> *>(parameters[0]),
-            reinterpret_cast<const nn::workload_data<float> *>(parameters[1]),
-            reinterpret_cast<nn::workload_data<float> *>(outputs[0]));
+    forward(reinterpret_cast<const nn::workload_data<> *>(inputs[0]),
+            reinterpret_cast<const nn::workload_data<> *>(parameters[0]),
+            reinterpret_cast<const nn::workload_data<> *>(parameters[1]),
+            nn::workload_data_cast<>(outputs[0]));
 }
 
 void fully_connected_f32::backward(
@@ -1644,16 +1644,16 @@ void fully_connected_f32::backward(
     const std::vector<const nn_workload_data_t *> &parameters,
     const std::vector<const nn_workload_data_t *> &outputs)
 {
-    dispatch_backward_input_delta(reinterpret_cast<const nn::workload_data<float> *>(outputs[0]), 
-                                  reinterpret_cast<const nn::workload_data<float> *>(parameters[0]), 
-                                  reinterpret_cast<nn::workload_data<float> *>(inputs[0]));
+    dispatch_backward_input_delta(reinterpret_cast<const nn::workload_data<> *>(outputs[0]),
+                                  reinterpret_cast<const nn::workload_data<> *>(parameters[0]),
+                                  nn::workload_data_cast<>(inputs[0]));
 }
 
 void fully_connected_f32::backward_parameter(
     size_t parameter_index,
     const std::vector<const nn_workload_data_t *> &inputs,
     const std::vector<nn_workload_data_t *> &parameters,
-    const std::vector<const nn_workload_data_t *> &outputs) 
+    const std::vector<const nn_workload_data_t *> &outputs)
 {
     assert(inputs.size() == 1);
     //assert(parameters.size() == 1);
@@ -1661,14 +1661,14 @@ void fully_connected_f32::backward_parameter(
     switch (parameter_index)
     {
         case 0:
-            dispatch_backward_weights_delta(reinterpret_cast<const nn::workload_data<float> *>(inputs[0]),
-                                            reinterpret_cast<const nn::workload_data<float> *>(outputs[0]),
-                                            reinterpret_cast<nn::workload_data<float> *>(parameters[0]));
+            dispatch_backward_weights_delta(reinterpret_cast<const nn::workload_data<> *>(inputs[0]),
+                                            reinterpret_cast<const nn::workload_data<> *>(outputs[0]),
+                                            nn::workload_data_cast<>(parameters[0]));
             break;
         case 1:
-            dispatch_backward_bias_delta(reinterpret_cast<const nn::workload_data<float> *>(outputs[0]),
+            dispatch_backward_bias_delta(reinterpret_cast<const nn::workload_data<> *>(outputs[0]),
                                          nullptr, //TBD: bias multiplier
-                                         reinterpret_cast<nn::workload_data<float> *>(parameters[1])); 
+                                         nn::workload_data_cast<>(parameters[1]));
             break;
         default:
             throw std::invalid_argument("index out of range");
@@ -1676,9 +1676,9 @@ void fully_connected_f32::backward_parameter(
 }
 
 void fully_connected_f32::dispatch_backward_weights_delta(
-    const nn::workload_data<float> *forward_input_view,
-    const nn::workload_data<float> *forward_output_view,
-    nn::workload_data<float> *forward_weights_delta_view)
+    const nn::workload_data<> *forward_input_view,
+    const nn::workload_data<> *forward_output_view,
+    nn::workload_data<> *forward_weights_delta_view)
 {
     auto num_hardware_threads = std::min(device->thread_pool.get_num_threads(), max_threads);
     auto item_view_length = forward_weights_delta_view->view_end.t[NN_DATA_COORD_x] - forward_weights_delta_view->view_begin.t[NN_DATA_COORD_x] + 1;
@@ -1756,8 +1756,8 @@ void fully_connected_f32::dispatch_backward_weights_delta(
 
             request_handle.backward_input = forward_output_view;
             request_handle.forward_input = forward_input_view;
-            request_handle.output = new nn::workload_data<float>(
-                *const_cast<nn::workload_data<float> *>(forward_weights_delta_view), output_view_begin, output_view_end);
+            request_handle.output = new nn::workload_data<>(
+                *const_cast<nn::workload_data<> *>(forward_weights_delta_view), output_view_begin, output_view_end);
         }
 
         // Run threads.
@@ -1779,9 +1779,9 @@ void fully_connected_f32::dispatch_backward_weights_delta(
 }
 
 void fully_connected_f32::dispatch_backward_bias_delta(
-    const nn::workload_data<float> *forward_output_view,
-    const nn::workload_data<float> *bias_multiplier,
-    nn::workload_data<float> *forward_bias_delta_view)
+    const nn::workload_data<> *forward_output_view,
+    const nn::workload_data<> *bias_multiplier,
+    nn::workload_data<> *forward_bias_delta_view)
 {
     auto num_hardware_threads = std::min(device->thread_pool.get_num_threads(), max_threads);
     auto item_view_length = forward_bias_delta_view->view_end.t[NN_DATA_COORD_x] - forward_bias_delta_view->view_begin.t[NN_DATA_COORD_x] + 1;
@@ -1859,8 +1859,8 @@ void fully_connected_f32::dispatch_backward_bias_delta(
 
             request_handle.backward_input = forward_output_view;
             request_handle.bias_multiplier = bias_multiplier;
-            request_handle.output = new nn::workload_data<float>(
-                *const_cast<nn::workload_data<float> *>(forward_bias_delta_view), output_view_begin, output_view_end);
+            request_handle.output = new nn::workload_data<>(
+                *const_cast<nn::workload_data<> *>(forward_bias_delta_view), output_view_begin, output_view_end);
         }
 
         // Run threads.
@@ -1882,9 +1882,9 @@ void fully_connected_f32::dispatch_backward_bias_delta(
 }
 
 void fully_connected_f32::dispatch_backward_input_delta(
-    const nn::workload_data<float> *forward_output_view,
-    const nn::workload_data<float> *forward_weights_view,
-    nn::workload_data<float> *forward_input_view)
+    const nn::workload_data<> *forward_output_view,
+    const nn::workload_data<> *forward_weights_view,
+    nn::workload_data<> *forward_input_view)
 {
     auto num_hardware_threads = std::min(device->thread_pool.get_num_threads(), max_threads);
     auto item_view_length = forward_input_view->view_end.t[NN_DATA_COORD_x] - forward_input_view->view_begin.t[NN_DATA_COORD_x] + 1;
@@ -1963,8 +1963,8 @@ void fully_connected_f32::dispatch_backward_input_delta(
             request_handle.backward_input = forward_output_view;
             request_handle.forward_weights = forward_weights_view;
 
-            request_handle.output = new nn::workload_data<float>(
-                *const_cast<nn::workload_data<float> *>(forward_input_view), output_view_begin, output_view_end);
+            request_handle.output = new nn::workload_data<>(
+                *const_cast<nn::workload_data<> *>(forward_input_view), output_view_begin, output_view_end);
         }
 
         // Run threads.
@@ -2007,18 +2007,18 @@ void run_multithreaded_FC_work_item_backward(nn_workload_item *const work_item)
         forward_item_output->parent->buffer_size / static_cast<uint32_t>(sizeof(float)) / forward_item_output->parent->lengths.t[NN_DATA_COORD_n],
         1, 1, 1, 1 );
 
-    nn_workload_data_layout_t in_out_view_layout = nn::workload_data<float>::layout.nxyzpq;
+    nn_workload_data_layout_t in_out_view_layout = nn::layout_t<nn::layout_nxyzpq_f32>::layout;
 
-    nn::workload_data<float> forward_input_view(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_item_input->parent->data_buffer, input_view_coords, in_out_view_layout);
-    nn::workload_data<float> forward_output_view(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_item_output->parent->data_buffer, output_view_coords, in_out_view_layout);
+    nn::workload_data<> forward_input_view(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_item_input->parent->data_buffer, input_view_coords, in_out_view_layout);
+    nn::workload_data<> forward_output_view(NN_WORKLOAD_DATA_TAG_UNKNOWN, forward_item_output->parent->data_buffer, output_view_coords, in_out_view_layout);
 
     // Workaround for lack of compilation support in device API for delta buffers.
     // We are adding delta buffers to containers.
     forward_input_view.parent->delta_buffer = backward_item_output->parent->data_buffer;
     forward_output_view.parent->delta_buffer = backward_item_input->parent->data_buffer;
 
-    nn::workload_data<float> forward_weight_view(NN_WORKLOAD_DATA_TAG_UNKNOWN, work_item->forward_item->parameters[0]->parent->data_buffer, work_item->forward_item->parameters[0]->parent->lengths, work_item->forward_item->parameters[0]->parent->layout);
-    nn::workload_data<float> forward_bias_view(NN_WORKLOAD_DATA_TAG_UNKNOWN, work_item->forward_item->parameters[1]->parent->data_buffer, work_item->forward_item->parameters[1]->parent->lengths, work_item->forward_item->parameters[1]->parent->layout);
+    nn::workload_data<> forward_weight_view(NN_WORKLOAD_DATA_TAG_UNKNOWN, work_item->forward_item->parameters[0]->parent->data_buffer, work_item->forward_item->parameters[0]->parent->lengths, work_item->forward_item->parameters[0]->parent->layout);
+    nn::workload_data<> forward_bias_view(NN_WORKLOAD_DATA_TAG_UNKNOWN, work_item->forward_item->parameters[1]->parent->data_buffer, work_item->forward_item->parameters[1]->parent->lengths, work_item->forward_item->parameters[1]->parent->layout);
 
     forward_weight_view.parent->delta_buffer = backward_item_output_weight->parent->data_buffer;
     forward_bias_view.parent->delta_buffer = backward_item_output_bias->parent->data_buffer;
@@ -2067,7 +2067,8 @@ fully_connected_f32::fully_connected_f32(size_t num_input,
                                          const nn_argument_activation_t &activation,
                                          size_t batch_size,
                                          nn_device_internal *device)
-    : input_size_x(1),
+    : has_3d_input(false),
+      input_size_x(1),
       input_size_y(1),
       input_size_z(num_input),
       num_input(num_input),
@@ -2085,7 +2086,8 @@ fully_connected_f32::fully_connected_f32(size_t input_size_x,
                                          const nn_argument_activation_t &activation,
                                          size_t batch_size,
                                          nn_device_internal *device)
-    : input_size_x(input_size_x),
+    : has_3d_input(true),
+      input_size_x(input_size_x),
       input_size_y(input_size_y),
       input_size_z(input_size_z),
       num_input(input_size_x * input_size_y * input_size_z),
@@ -2099,7 +2101,7 @@ bool fully_connected_f32::validate_input(size_t index, nn_workload_data_t *data)
 {
     switch(index){
     case 0:
-        return nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, float>::validate(data, num_input, batch_size);
+        return nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, nn::layout_nx_f32>::validate(data, num_input, batch_size);
     }
 
     throw std::invalid_argument("index out of range");

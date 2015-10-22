@@ -31,7 +31,9 @@ file (GLOB TEST_CASES_SRC
 # Main source file
 set  (MAIN_SRC
       "main.cpp"
-      "naive_implementations.cpp")
+      "naive_implementations.cpp"
+      "forward_convolve_simmplifying_wrapper.cpp"
+      )
 
 # Create named folders for the sources within the .vcproj
 # Empty name lists them directly under the .vcproj
@@ -39,7 +41,11 @@ source_group("" FILES ${MAIN_SRC})
 source_group("test_cases" FILES ${TEST_CASES_SRC})
 
 # Properties->C/C++->General->Additional Include Directories
-include_directories ("${PROJECT_SOURCE_DIR}/tester/g_ult/gtest" "${PROJECT_SOURCE_DIR}/tester/g_ult/gtest/include")
+include_directories ("${PROJECT_SOURCE_DIR}/tester/g_ult/gtest"
+                     "${PROJECT_SOURCE_DIR}/tester/g_ult/gtest/include"
+                     "${PROJECT_SOURCE_DIR}/tester/g_ult/unit_tests"
+                     "${PROJECT_SOURCE_DIR}/device/"
+                     )
 
 # Create exe file from sources.
 set (ULT_EXE_NAME "ult_cpu")

@@ -39,6 +39,7 @@ include_directories(${CMAKE_SOURCE_DIR})
 
 file (GLOB MAIN_SRC
        main.cpp
+       disabled_tests.*
       )
 
 file (GLOB COMMON_SRC
@@ -56,6 +57,10 @@ file (GLOB TESTS_SRC
 file (GLOB WORKFLOWS_SRC
      ${WORKFLOWS_SRC_DIR}/*.cpp
      )
+file (GLOB WORKLOAD_FOR_TEST_SRC
+     ${CMAKE_SOURCE_DIR}/device/common/*.cpp
+     ${CMAKE_SOURCE_DIR}/device/common/*.h
+     )
 
 
 add_executable(${TESTER_APP_NAME}
@@ -63,6 +68,7 @@ add_executable(${TESTER_APP_NAME}
                  ${COMMON_SRC}
                  ${TESTS_SRC}
                  ${WORKFLOWS_SRC}
+                 ${WORKLOAD_FOR_TEST_SRC}
               )
 
 set_target_properties( ${TESTER_APP_NAME}
@@ -96,10 +102,14 @@ source_group (
                "tests\\workflows_for_tests"
                FILES ${WORKFLOWS_SRC}
              )
+source_group (
+               "workload"
+               FILES ${WORKLOAD_FOR_TEST_SRC}
+             )
 
 set (POST_BUILD_WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/tester/${COMPILER_STR}${BUILD_TYPE})
 
-target_link_libraries(${TESTER_APP_NAME} ${FreeImage_LIBRARIES})
+target_link_libraries(${TESTER_APP_NAME} ${FreeImage_LIBRARIES} asmjit)
 
 if (UNIX)
     target_link_libraries(${TESTER_APP_NAME} dl)

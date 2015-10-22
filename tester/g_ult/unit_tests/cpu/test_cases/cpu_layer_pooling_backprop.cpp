@@ -92,7 +92,7 @@ namespace
         nn_workflow_item_t *pooling = nullptr;
         {
             nn_workflow_use_descriptor_t desc0 = { input, 0 };
-            EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_create_function(&pooling, 1, &desc0, 1));
+            EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_create_function(&pooling, 1, &desc0, 2));
             pooling->type = NN_WORK_ITEM_TYPE_POOLING;
 
             auto& args = pooling->arguments.forward_pooling;
@@ -131,8 +131,8 @@ namespace
         // Create pooling backprop.
         nn_workflow_item_t *pool_backprop = nullptr;
         {
-            nn_workflow_use_descriptor_t desc0 = { loss_function, 0 };
-            EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_create_function(&pool_backprop, 1, &desc0, 1));
+            nn_workflow_use_descriptor_t desc0[] = {{ loss_function, 0 }, {pooling, 1}};
+            EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_create_function(&pool_backprop, 2, desc0, 1));
             pool_backprop->type = NN_WORK_ITEM_TYPE_POOLING_BACKPROP;
 
             pool_backprop->forward_item = pooling;
@@ -161,17 +161,17 @@ namespace
     nn_workload_item_t* get_backprop(
         nn_workload_t* workload)
     {
-        nn_workload_opaque_t* workload_opaque = reinterpret_cast<nn_workload_opaque_t*>(workload + 1);
+        nn_workload_opaque_t* workload_opaque = static_cast<nn_workload_opaque_t*>(workload);
         nn_workload_item_t *workload_backprop = workload_opaque->order_of_execution.back();
         assert(workload_backprop->type == NN_WORK_ITEM_TYPE_POOLING_BACKPROP);
 
         return workload_backprop;
     }
 
-    void backward_naive(const nn::workload_data<float> *forward_input,
-                        const nn::workload_data<float> *forward_output,
-                        const nn::workload_data<float> *backward_input,
-                        nn::workload_data<float> *backward_output,
+    void backward_naive(const nn::workload_data<nn::layout_f32> *forward_input,
+                        const nn::workload_data<nn::layout_f32> *forward_output,
+                        const nn::workload_data<nn::layout_f32> *backward_input,
+                        nn::workload_data<nn::layout_f32> *backward_output,
                         uint32_t pool_stride_x,
                         uint32_t pool_stride_y, 
                         uint32_t pool_size_x,
@@ -186,10 +186,11 @@ namespace
                     for (uint32_t element_z = 0; element_z < forward_output->get_length(NN_DATA_COORD_z); ++element_z)
                     {
                         float output_value = forward_output->at(batch, output_element_x, output_element_y, element_z, 0, 0);
-
-                        for (uint32_t input_element_y = 0; input_element_y < pool_size_y; ++input_element_y)
+                        bool continue_searching = true;
+                        
+                        for (uint32_t input_element_y = 0; input_element_y < pool_size_y && continue_searching; ++input_element_y)
                         {
-                            for (uint32_t input_element_x = 0; input_element_x < pool_size_x; ++input_element_x)
+                            for (uint32_t input_element_x = 0; input_element_x < pool_size_x && continue_searching; ++input_element_x)
                             {
                                 uint32_t input_offset_x = output_element_x * pool_stride_x + input_element_x;
                                 uint32_t input_offset_y = output_element_y * pool_stride_y + input_element_y;
@@ -210,6 +211,8 @@ namespace
                                         element_z, 0, 0)
                                         +=
                                         backward_input->at(batch, output_element_x, output_element_y, element_z, 0, 0);
+                                
+                                    continue_searching = false;
                                 }
                             }
                         }
@@ -223,8 +226,8 @@ namespace
         nn_workload_data_t* data_item,
         nn_workload_data_t* data_item_ref)
     {
-        nn::workload_data<float> data(data_item->parent->data_buffer, data_item->parent->lengths, data_item->parent->layout);
-        nn::workload_data<float> reference(data_item_ref->parent->data_buffer, data_item_ref->parent->lengths, data_item_ref->parent->layout);
+        nn::workload_data<nn::layout_f32> data(data_item->parent->data_buffer, data_item->parent->lengths, data_item->parent->layout);
+        nn::workload_data<nn::layout_f32> reference(data_item_ref->parent->data_buffer, data_item_ref->parent->lengths, data_item_ref->parent->layout);
         auto& size = data_item->parent->lengths;
         for (auto n = 0u; n < size.t[0]; ++n)
             for (auto x = 0u; x < size.t[1]; ++x)
@@ -258,10 +261,11 @@ namespace
     }
 
     void run_primitives_api(
-        nn::workload_data<float>* forward_input,
-        nn::workload_data<float>* forward_output,
-        nn::workload_data<float>* backward_input,
-        nn::workload_data<float>* backward_error_delta,
+        nn::workload_data<nn::layout_f32>* forward_input,
+        nn::workload_data<nn::layout_f32>* forward_intermediate,
+        nn::workload_data<nn::layout_f32>* forward_output,
+        nn::workload_data<nn::layout_f32>* backward_input,
+        nn::workload_data<nn::layout_f32>* backward_error_delta,
         uint32_t pool_stride_x,
         uint32_t pool_stride_y,
         uint32_t pool_size_x,
@@ -289,7 +293,9 @@ namespace
                 pool_stride_y,
                 size.t[NN_DATA_COORD_z], // num of feature maps
                 size.t[NN_DATA_COORD_x], // output width
-                size.t[NN_DATA_COORD_y], // output height
+                size.t[NN_DATA_COORD_y], // output height,
+                0,
+                0,
                 size.t[NN_DATA_COORD_n], // batch
                 nullptr,
                 nullptr);
@@ -302,10 +308,10 @@ namespace
 
         // execute pooling backward
         nn_opaque_data_t*  inputs[] = {reinterpret_cast<nn_opaque_data_t*> (forward_input)};
-        nn_opaque_data_t* outputs[] = {reinterpret_cast<nn_opaque_data_t*> (forward_output)};
+		nn_opaque_data_t* outputs[] = { reinterpret_cast<nn_opaque_data_t*> (forward_output), reinterpret_cast<nn_opaque_data_t*> (forward_intermediate) };
 
         nn_event_t pooling = primitives.backward_async(
-            primitive, 1, inputs, 0, nullptr, 1, outputs, 0, nullptr, nullptr);
+            primitive, 1, inputs, 0, nullptr, 2, outputs, 0, nullptr, nullptr);
 
         primitives.wait(1, &pooling);
 
@@ -325,14 +331,13 @@ namespace
         uint32_t pool_size_x,
         uint32_t pool_size_y,
         uint32_t fmaps,
-        uint32_t input_width,
-        uint32_t input_height,
+        uint32_t output_width,
+        uint32_t output_height,
         uint32_t batch,
         bool negative)
     {
-        nn::output_format input_format(input_width, input_height, fmaps);
-        nn::output_format output_temp_format(input_width - pool_size_x + 1, input_height - pool_size_y + 1, fmaps);
-        nn::output_format output_format(1 + (output_temp_format.size(0) - 1) / pool_stride_x, 1 + (output_temp_format.size(1) - 1) / pool_stride_y, output_temp_format.size(2));
+        nn::output_format input_format((output_width - 1) * pool_stride_x + pool_size_x, (output_height - 1) * pool_stride_y + pool_size_y, fmaps);
+        nn::output_format output_format(output_width, output_height, fmaps);
 
         // Load device.
         nn_device_interface_0_t di = load_device();
@@ -365,25 +370,26 @@ namespace
             for (uint32_t z = 0; z < input_datas[0]->size[2]; ++z)
                 for (uint32_t y = 0; y < input_datas[0]->size[1]; ++y)
                     for (uint32_t x = 0; x < input_datas[0]->size[0]; ++x)
-                        (*input_datas[0])(x, y, z, n) = 1.0f + dis(gen);
+                        (*input_datas[0])(x, y, z, n) = (1.0f + dis(gen)) * static_cast<float>(x + y + z + n);
 
         for (uint32_t n = 0; n < input_datas[1]->size[3]; ++n)
             for (uint32_t z = 0; z < input_datas[1]->size[2]; ++z)
                 for (uint32_t y = 0; y < input_datas[1]->size[1]; ++y)
                     for (uint32_t x = 0; x < input_datas[1]->size[0]; ++x)
-                        (*input_datas[1])(x, y, z, n) = 0.5f;
+                        (*input_datas[1])(x, y, z, n) = 0.5f * static_cast<float>(x + y + z + n);
 
         // Get refernces to all buffers used by convolution and its backprop.
         // "Inputs" to backprop.
         auto forward_input = pool_backprop->forward_item->input[0].get_data_view();
         auto forward_output = pool_backprop->forward_item->output[0];
+        auto forward_intermediate = pool_backprop->forward_item->output[1];
         auto backward_input = pool_backprop->input[0].get_data_view();
 
         // Outputs of backprop.
         auto backward_error_delta = pool_backprop->output[0];
 
         // Create reference outputs with same layout and sizes.
-        nn::workload_data<float> ref_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
+        nn::workload_data<nn::layout_f32> ref_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
 
         std::memset(ref_backward_error_delta.parent->data_buffer, 0, ref_backward_error_delta.parent->buffer_size);
 
@@ -391,25 +397,34 @@ namespace
         NN_API_STATUS status;
         EXPECT_EQ(NN_API_STATUS_OK, di.workload_execute_function(workload, (void **)input_datas, nullptr, &status));
 
+        // Create data for naive run.
+        nn::workload_data<nn::layout_f32> naive_forward_input(
+            input_datas[0]->buffer, 
+            forward_input->parent->lengths, 
+            forward_input->parent->layout);
+
+        naive_forward_input.view_begin = forward_input->view_begin;
+        naive_forward_input.view_end = forward_input->view_end;
+
         // Run naive code.
-        forward_input->parent->data_buffer = input_datas[0]->buffer;
         backward_naive(
-            static_cast<nn::workload_data<float>*>(forward_input),
-            static_cast<nn::workload_data<float>*>(forward_output),
-            static_cast<nn::workload_data<float>*>(backward_input),
+            &naive_forward_input,
+            nn::workload_data_cast<nn::layout_f32>(forward_output),
+            nn::workload_data_cast<nn::layout_f32>(backward_input),
             &ref_backward_error_delta,
             pool_stride_x,
             pool_stride_y,
             pool_size_x,
             pool_size_y);
-
+        
         // Run optimized code through primitive API
-        nn::workload_data<float> prim_backward_error_delta(forward_input->parent->lengths, forward_input->parent->layout);
+        nn::workload_data<nn::layout_f32> prim_backward_error_delta(forward_input->parent->lengths, forward_input->parent->layout);
         std::memset(prim_backward_error_delta.parent->data_buffer, 0, prim_backward_error_delta.parent->buffer_size);
         run_primitives_api(
-            static_cast<nn::workload_data<float>*>(forward_input),
-            static_cast<nn::workload_data<float>*>(forward_output),
-            static_cast<nn::workload_data<float>*>(backward_input),
+            &naive_forward_input,
+            nn::workload_data_cast<nn::layout_f32>(forward_intermediate),
+            nn::workload_data_cast<nn::layout_f32>(forward_output),
+            nn::workload_data_cast<nn::layout_f32>(backward_input),
             &prim_backward_error_delta,
             pool_stride_x,
             pool_stride_y,
@@ -454,21 +469,21 @@ namespace
 // Tests.
 TEST(cpu_pooling_backprop, standard_square_positive)
 {
-    for (auto batch : { 1, 8 })
-        for (auto in = 1; in < 9; in++)
-            for (auto fmaps : { 8, 64, 72 })
-                for (auto stride : { 1, 2 })
-                    for (auto size = in; size > 0; size--)
-                        run_test(stride, stride, size, size, fmaps, in, in, batch, false);
+    for (auto batch : { 1, 8, 48 })
+        for (auto fmaps : { 8, 64, 72 })
+            for (auto stride : { 1, 2, 3 })
+                for (auto size : { 1, 2, 3 })
+                    for(auto out : { 1, 2, 3 })
+                        run_test(stride, stride, size, size, fmaps, out, out, batch, false);
 }
 
 TEST(cpu_pooling_backprop, standard_square_negative)
 {
-    for (auto batch : { 1, 8 })
-        for (auto in = 1; in < 9; in++)
-            for (auto fmaps : { 8, 64, 72 })
-                for (auto stride : { 1, 2 })
-                    for (auto size = in; size > 0; size--)
-                        run_test(stride, stride, size, size, fmaps, in, in, batch, true);
+    for (auto batch : { 1, 8, 48 })
+        for (auto fmaps : { 8, 64, 72 })
+            for (auto stride : { 1, 2, 3 })
+                for (auto size : { 1, 2, 3 })
+                    for(auto out : { 1, 2, 3 })
+                        run_test(stride, stride, size, size, fmaps, out, out, batch, true);
 }
 

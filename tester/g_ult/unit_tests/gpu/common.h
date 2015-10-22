@@ -144,7 +144,7 @@ void convolve_ref( fp_func_activ             FA,
 
 void init_data( float * &buffer, uint_least32_t bufferCount, float initValue );
 
-std::unique_ptr< nn::workload_data< float > > create_nn_workload_data_using_buffer( const float        *const buffer,
+std::unique_ptr< nn::workload_data<> > create_nn_workload_data_using_buffer( const float        *const buffer,
                                                                        nn_workload_data_layout_t          &buffer_layout,
                                                                        nn_workload_data_coords_t          &buffer_coords );
 bool verify_output( std::unique_ptr<nn::data<float, 0>> &output_data, float * const ref_buf );

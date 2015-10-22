@@ -27,6 +27,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "tester/g_ult/unit_tests/cpu/naive_implementations.h"
 #include "device/cpu/core/layer_fully_connected_avx2.h"
+#include <cfloat>
+#include <gtest/gtest.h>
 
 namespace
 {
@@ -94,17 +96,22 @@ bool run_work_item(
 void destroy_work_item(
     nn_workload_item* &work_item)
 {
-    if (work_item->type == NN_WORK_ITEM_TYPE_FULLY_CONNECTED)
+    for(auto& parameter : work_item->parameters)
     {
-        delete reinterpret_cast<nn::workload_data<float> *>(work_item->parameters[0]);
-        delete reinterpret_cast<nn::workload_data<float> *>(work_item->parameters[1]);
+        delete parameter;
+        parameter = nullptr;
     }
 
-    work_item->input.clear();
-    delete reinterpret_cast<nn::workload_data<float>*>(work_item->output[0]);
+    for(auto& output : work_item->output)
+    {
+        delete output;
+        output = nullptr;
+    }
+
+    delete work_item->primitive;
+    work_item->primitive = nullptr;
 
     delete work_item;
-
     work_item = nullptr;
 }
 
@@ -126,12 +133,12 @@ void create_and_initialize_input_item(
     work_item = new nn_workload_item();
 
     work_item->type = NN_WORK_ITEM_TYPE_INPUT;
-
+    work_item->primitive = nullptr;
     work_item->arguments.input.index = 0;
 
-    nn_workload_data_layout_t inp_out_layout = nn::workload_data<float>::layout.nxyzpq;
+    nn_workload_data_layout_t inp_out_layout = nn::layout_t<nn::layout_nxyzpq_f32>::layout;
 
-    work_item->output.push_back(new nn::workload_data<float>(in_out_coords, inp_out_layout));
+    work_item->output.push_back(new nn::workload_data<>(in_out_coords, inp_out_layout));
 
     for (uint32_t batch = 0; batch < batch_size; ++batch)
     {
@@ -203,11 +210,11 @@ void create_and_initialize_work_item(
     work_item->primitive = new layer::fully_connected_f32(
         input_width, output_width, s_activation, batch_size, reinterpret_cast<nn_device_internal *>(device));
 
-    nn_workload_data_layout_t inp_out_bias_layout = nn::workload_data<float>::layout.nxyzpq;
+    nn_workload_data_layout_t inp_out_bias_layout = nn::layout_t<nn::layout_nxyzpq_f32>::layout;
 
     if (is_ref)
     {
-        nn_workload_data_layout_t weights_layout = nn::workload_data<float>::layout.xyzpqn;
+        nn_workload_data_layout_t weights_layout = nn::layout_t<nn::layout_xyzpqn_f32>::layout;
 
         nn_workload_data_coords_t weights_coords =
         {
@@ -219,9 +226,9 @@ void create_and_initialize_work_item(
             1
         };
 
-        work_item->output.push_back(new nn::workload_data<float>(output_coords, inp_out_bias_layout));
-        biases = new nn::workload_data<float>(bias_coords, inp_out_bias_layout);
-        weights = new nn::workload_data<float>(weights_coords, weights_layout);
+        work_item->output.push_back(new nn::workload_data<>(output_coords, inp_out_bias_layout));
+        biases = new nn::workload_data<>(bias_coords, inp_out_bias_layout);
+        weights = new nn::workload_data<>(weights_coords, weights_layout);
 
         for (uint32_t weight_input = 0; weight_input < input_width; ++weight_input)
         {
@@ -252,7 +259,7 @@ void create_and_initialize_work_item(
     {
         if (batch_size == 1)
         {
-            nn_workload_data_layout_t weights_layout = nn::workload_data<float>::layout.yxzpqn;
+            nn_workload_data_layout_t weights_layout = nn::layout_t<nn::layout_yxzpqn_f32>::layout;
 
             nn_workload_data_coords_t weights_coords =
             {
@@ -264,7 +271,7 @@ void create_and_initialize_work_item(
                 1
             };
 
-            weights = new nn::workload_data<float>(weights_coords, weights_layout);
+            weights = new nn::workload_data<>(weights_coords, weights_layout);
 
             for (uint32_t weight_input = 0; weight_input < input_width; ++weight_input)
             {
@@ -280,7 +287,7 @@ void create_and_initialize_work_item(
         }
         else if (batch_size == 8)
         {
-            nn_workload_data_layout_t weights_layout = nn::workload_data<float>::layout.pxqzyn;
+            nn_workload_data_layout_t weights_layout = nn::layout_t<nn::layout_pxqzyn_f32>::layout;
 
             nn_workload_data_coords_t weights_coords =
             {
@@ -292,7 +299,7 @@ void create_and_initialize_work_item(
                 (output_width + C_max_acc_batch8 - 1) / C_max_acc_batch8
             };
 
-            weights = new nn::workload_data<float>(weights_coords, weights_layout);
+            weights = new nn::workload_data<>(weights_coords, weights_layout);
 
             for (uint32_t weight_input = 0; weight_input < input_width; ++weight_input)
             {
@@ -308,7 +315,7 @@ void create_and_initialize_work_item(
         }
         else if (batch_size == 48)
         {
-            nn_workload_data_layout_t weights_layout = nn::workload_data<float>::layout.pxqzyn;
+            nn_workload_data_layout_t weights_layout = nn::layout_t<nn::layout_pxqzyn_f32>::layout;
 
             nn_workload_data_coords_t weights_coords =
             {
@@ -320,7 +327,7 @@ void create_and_initialize_work_item(
                 (output_width + C_max_acc_batch48 - 1) / C_max_acc_batch48
             };
 
-            weights = new nn::workload_data<float>(weights_coords, weights_layout);
+            weights = new nn::workload_data<>(weights_coords, weights_layout);
 
             for (uint32_t weight_input = 0; weight_input < input_width; ++weight_input)
             {
@@ -335,8 +342,8 @@ void create_and_initialize_work_item(
             }
         }
 
-        work_item->output.push_back(new nn::workload_data<float>(output_coords, inp_out_bias_layout));
-        biases = (bias_in_output) ? nullptr : new nn::workload_data<float>(bias_coords, inp_out_bias_layout);
+        work_item->output.push_back(new nn::workload_data<>(output_coords, inp_out_bias_layout));
+        biases = (bias_in_output) ? nullptr : new nn::workload_data<>(bias_coords, inp_out_bias_layout);
 
         for (uint32_t batch = 0; batch < batch_size; ++batch)
         {

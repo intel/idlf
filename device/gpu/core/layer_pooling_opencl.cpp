@@ -37,9 +37,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace device_gpu
 {
 //TODO: Make padding for pooling. currently input view need to contaain whole pooling area
-static std::string kernelSource = R"( 
+static std::string kernelSource = R"(
 // Input dimensions, pooling window size passed via compiler definition
-// build options: -DINPUT_WIDTH, -DINPUT_HEIGHT=, -DINPUT_HEIGHT=, -DINPUT_WINDOW_SIZE -DINPUT_WINDOW_STRIDE 
+// build options: -DINPUT_WIDTH, -DINPUT_HEIGHT=, -DINPUT_HEIGHT=, -DINPUT_WINDOW_SIZE -DINPUT_WINDOW_STRIDE
 //               -DINPUT_START_X, -DINPUT_START_Y
 //               -DINPUT_END_X, -DINPUT_END_Y
 //               -DOUTPUT_START_X, -DOUTPUT_START_Y
@@ -94,7 +94,7 @@ __kernel void max_pool_overlapping(
 
     const unsigned X = get_global_id( 0 );
     const unsigned Y = get_global_id( 1 );
-    
+
     __global float* my_input  = input  + fm * input_stride + Y * INPUT_WIDTH * INPUT_WINDOW_STRIDE + INPUT_START_Y * INPUT_WIDTH + X * INPUT_WINDOW_STRIDE + INPUT_START_X;
 #ifdef IMAGE_AS_OUTPUT
     const unsigned output_write_x_coord = (fm %INPUT_DEPTH) * output_stride + ( OUTPUT_START_Y + Y ) * output_width_stride + X + OUTPUT_START_X;
@@ -165,9 +165,9 @@ __kernel void max_pool_overlapping(
         }
     }
 
-#ifdef IMAGE_AS_OUTPUT 
+#ifdef IMAGE_AS_OUTPUT
     write_imagef(output,(int2)(output_write_x_coord, output_write_y_coord),max_value);
-#else   
+#else
     *my_output = max_value;
 #endif
 
@@ -433,7 +433,7 @@ pooling_kernel_key ocl_toolkit::prepare_pooling_kernel(
         extra_compile_args += " -DOUTPUT_START_X=" + std::to_string( output_start_x );
         extra_compile_args += " -DOUTPUT_START_Y=" + std::to_string( output_start_y );
 
-        // Should the output area be a buffer or image 
+        // Should the output area be a buffer or image
         if(image_as_output == true) {
             extra_compile_args += " -DIMAGE_AS_OUTPUT";
         }
@@ -498,9 +498,9 @@ void ocl_toolkit::max_pool( nn_cl_data          *output,
 
     // Get Kernel for a job
     std::map< pooling_kernel_key, std::unique_ptr< cl::Kernel > >::iterator kit =
-        m_pooling_kernels.find( prepare_pooling_kernel( 
+        m_pooling_kernels.find( prepare_pooling_kernel(
                                 output->parent->cl_buffer[0] == nullptr,  // If no buffer exist than use image
-                                input_width, input_height, input_depth, 
+                                input_width, input_height, input_depth,
                                 static_cast<const ::size_t*>(input_start_offset)[0],
                                 static_cast<const ::size_t*>(input_start_offset)[1],
                                 static_cast<const ::size_t*>(input_end_offset)[0],
@@ -529,7 +529,7 @@ void ocl_toolkit::max_pool( nn_cl_data          *output,
     {
         THROW_ERROR( retVal, " Error setting OpenCL pooling kernel argument idx: 1 failed with error: ");
     }
-    // Length of View scope for Z dimension (depth) for output and input is the same eg. 
+    // Length of View scope for Z dimension (depth) for output and input is the same eg.
     // output_view_end_z - output_view_start_z = input_view_end_z - input_view_start_z
     // It just coords can be shifted
 
@@ -538,13 +538,13 @@ void ocl_toolkit::max_pool( nn_cl_data          *output,
     //basically each work item is responsible for computing one window of data.
 
     //todo, when zero padding will be enabled, make sure this code will be changed to:
-    //cl::NDRange global_size( input_width / stride_x, input_height / stride_x , ( static_cast<const ::size_t*>(output_end_offset)[2] - static_cast<const ::size_t*>(output_start_offset)[2] + 1) * (output_batch_end - output_batch_start + 1) );    
+    //cl::NDRange global_size( input_width / stride_x, input_height / stride_x , ( static_cast<const ::size_t*>(output_end_offset)[2] - static_cast<const ::size_t*>(output_start_offset)[2] + 1) * (output_batch_end - output_batch_start + 1) );
 
-    //compute NDRange size, dimension is end - start , then we reduce by windows size , divide by stride and add 1 
+    //compute NDRange size, dimension is end - start , then we reduce by windows size , divide by stride and add 1
     size_t dim_size_x = input_end_offset[0] - input_start_offset[0] + 1;
     size_t dim_size_y = input_end_offset[1] - input_start_offset[1] + 1;
 
-    cl::NDRange global_size(( (dim_size_x - size_x) / stride_x + 1 ), ( ( dim_size_y - size_x )/ stride_x + 1 ), ( static_cast<const ::size_t*>(output_end_offset)[2] - static_cast<const ::size_t*>(output_start_offset)[2] + 1) * (output_batch_end - output_batch_start + 1) );    
+    cl::NDRange global_size(( (dim_size_x - size_x) / stride_x + 1 ), ( ( dim_size_y - size_x )/ stride_x + 1 ), ( static_cast<const ::size_t*>(output_end_offset)[2] - static_cast<const ::size_t*>(output_start_offset)[2] + 1) * (output_batch_end - output_batch_start + 1) );
 
 
     cl::NDRange offset(0,0,output_start_offset[2]);
@@ -553,7 +553,7 @@ void ocl_toolkit::max_pool( nn_cl_data          *output,
     // and pointer to it is passed to as data to callback mechanism
     // after using callback function will free dynamic allocation
     exec_struct *psc = new exec_struct;
-    psc->name = "pooling"; 
+    psc->name = "pooling";
     psc->num_fmads = 0; //No theretical value yet
     psc->time_event = new cl::Event;
     retVal = m_queue->enqueueNDRangeKernel( *( kit->second ), offset, global_size, cl::NullRange, 0, psc->time_event );
@@ -563,7 +563,7 @@ void ocl_toolkit::max_pool( nn_cl_data          *output,
 #endif
     if( retVal != CL_SUCCESS )
     {
-        THROW_ERROR(retVal, 
+        THROW_ERROR(retVal,
                          " Error executing OpenCL enqueueNDRange for pooling kernel. Call failed with error: ");
     }
 }

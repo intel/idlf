@@ -29,7 +29,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "device/api/nn_device_interface_0.h"
 #include "nn_device_interface_0_functions.h"
 #include "device/gpu/core/layers_opencl.h"
-            
+
 #include <cassert>
 #include <cstring>
 #include <iostream>
@@ -97,7 +97,7 @@ int32_t nn_device_load(
     if( description == nullptr )
     {
         return -2;
-    } 
+    }
     else
     {
         *description = nn_device_description_t{
@@ -111,13 +111,13 @@ int32_t nn_device_load(
     try {
        device_interface_0.device =  reinterpret_cast<nn_device_t*>(new device_gpu::ocl_toolkit());
     }
-    catch( device_gpu::runtime_error err ) 
+    catch( device_gpu::runtime_error err )
     {
         std::cerr << err.what() << std::endl;
         return -1;
     }
     catch(...) {
-       assert(0);   // This should not happen. If we ever throw wrong type of object 
+       assert(0);   // This should not happen. If we ever throw wrong type of object
        return -1;   // It should be caught here
     }
 
@@ -140,7 +140,7 @@ int32_t nn_device_interface_open(
     switch(version) {
     default:
         return -1;
-    case 0: 
+    case 0:
         std::memcpy(device_interface, &device_interface_0, sizeof(device_interface_0));
         return 0;
     }
@@ -178,6 +178,6 @@ int32_t nn_device_unload() {
 
     delete reinterpret_cast<device_gpu::ocl_toolkit*>(device_interface_0.device);
     device_interface_0.device = nullptr;
-    
+
     return 0;
 }

@@ -29,7 +29,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "tester/common/test_aggregator.h"
 #include "tester/common/devices_aggregator.h"
 #include "tester/common/results_aggregator.h"
-
+#include "disabled_tests.h"
 
 int main(int argc,char *argv[])
 {
@@ -50,7 +50,16 @@ int main(int argc,char *argv[])
         test_aggregator::instance().get_tests_list(test_list);
         for(auto test_name : test_list)  {
             auto test = test_aggregator::instance().get(test_name);
-            if(!test->run()) ++fails;
+            auto disabled_test = std::find(disabled_tests.begin(),disabled_tests.end(),test->get_description());
+            if(disabled_test == disabled_tests.end()){
+                if(!test->run()) ++fails;
+            }
+            else {
+                test_measurement_result   disabled_result;
+                disabled_result.description = "DISABLED: " + test->get_description();
+                disabled_result.passed = true;
+                tests_results.get() << disabled_result;
+            }
         }
         tests_results->save_results(get_timestamp()+"_test_results.csv");
 
@@ -61,7 +70,7 @@ int main(int argc,char *argv[])
         return -1;
     }
     catch(...) {
-        std::cout << "unknown error" << std::endl;
+        std::cout << "error: unknown" << std::endl;
         return -1;
     }
 }

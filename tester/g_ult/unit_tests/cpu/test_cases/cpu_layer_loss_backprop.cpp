@@ -129,7 +129,7 @@ namespace
     nn_workload_item_t* get_loss_item(
         nn_workload_t* workload)
     {
-        nn_workload_opaque_t* workload_opaque = reinterpret_cast<nn_workload_opaque_t*>(workload + 1);
+        nn_workload_opaque_t* workload_opaque = static_cast<nn_workload_opaque_t*>(workload);
         nn_workload_item_t *loss_item = workload_opaque->order_of_execution.back();
         assert(loss_item->type == NN_WORK_ITEM_TYPE_LOSS_FUNCTION);
 
@@ -160,8 +160,8 @@ namespace
         nn_workload_data_t* data_item,
         nn_workload_data_t* data_item_ref)
     {
-        nn::workload_data<float> data(data_item->parent->data_buffer, data_item->parent->lengths, data_item->parent->layout);
-        nn::workload_data<float> reference(data_item_ref->parent->data_buffer, data_item_ref->parent->lengths, data_item_ref->parent->layout);
+        nn::workload_data<nn::layout_f32> data(data_item->parent->data_buffer, data_item->parent->lengths, data_item->parent->layout);
+        nn::workload_data<nn::layout_f32> reference(data_item_ref->parent->data_buffer, data_item_ref->parent->lengths, data_item_ref->parent->layout);
         auto& size = data_item->parent->lengths;
         for (auto n = 0u; n < size.t[0]; ++n)
             for (auto x = 0u; x < size.t[1]; ++x)
@@ -196,9 +196,9 @@ namespace
 
     void run_primitives_api(
         NN_LOSS_FUNCTION function,
-        nn::workload_data<float>* forward_input_current,
-        nn::workload_data<float>* forward_input_target,
-        nn::workload_data<float>* backward_error_delta)
+        nn::workload_data<>* forward_input_current,
+        nn::workload_data<>* forward_input_target,
+        nn::workload_data<>* backward_error_delta)
     {
         nn_device_primitives_description_t device_primitives_description;
         nn_device_get_primitives_description(&device_primitives_description);
@@ -283,7 +283,7 @@ namespace
         auto backward_error_delta = loss_item->output[0];
 
         // Create reference outputs with same layout and sizes.
-        nn::workload_data<float> ref_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
+        nn::workload_data<> ref_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
 
         std::memset(ref_backward_error_delta.parent->data_buffer, 0, ref_backward_error_delta.parent->buffer_size);
 
@@ -291,26 +291,39 @@ namespace
         NN_API_STATUS status;
         EXPECT_EQ(NN_API_STATUS_OK, di.workload_execute_function(workload, (void **)input_datas, nullptr, &status));
 
-        // Run naive code.
-        forward_input_current->parent->data_buffer = reinterpret_cast<nn::data<int32_t>**>(input_datas)[0]->buffer;
-        forward_input_target->parent->data_buffer = reinterpret_cast<nn::data<int32_t>**>(input_datas)[1]->buffer;
+        // Create data for naive run.
+        nn::workload_data<> naive_forward_input_current(
+            reinterpret_cast<nn::data<int32_t>**>(input_datas)[0]->buffer, 
+            forward_input_current->parent->lengths, 
+            forward_input_current->parent->layout);
 
+        naive_forward_input_current.view_begin = forward_input_current->view_begin;
+        naive_forward_input_current.view_end = forward_input_current->view_end;
+
+        nn::workload_data<> naive_forward_input_target(
+            reinterpret_cast<nn::data<int32_t>**>(input_datas)[1]->buffer, 
+            forward_input_target->parent->lengths, 
+            forward_input_target->parent->layout);
+
+        naive_forward_input_target.view_begin = forward_input_target->view_begin;
+        naive_forward_input_target.view_end = forward_input_target->view_end;
+
+        // Run naive code.
         naive_loss_function(
             function,
-            forward_input_current,
-            forward_input_target,
+            &naive_forward_input_current,
+            &naive_forward_input_target,
             &ref_backward_error_delta);
 
         // Run optimized code through primitive API
-        nn::workload_data<float> prim_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
+        nn::workload_data<> prim_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
         std::memset(prim_backward_error_delta.parent->data_buffer, 0, prim_backward_error_delta.parent->buffer_size);
 
         run_primitives_api(
             function,
-            static_cast<nn::workload_data<float>*>(forward_input_current),
-            static_cast<nn::workload_data<float>*>(forward_input_target),
+            &naive_forward_input_current,
+            &naive_forward_input_target,
             &prim_backward_error_delta);
-
 
         if (negative)
         {

@@ -68,16 +68,16 @@ bool operator < ( const conv_kernel_key &A, const conv_kernel_key &B )
         return true;
     }
 
-    if( ( A.m_total_output_depth == B.m_total_output_depth ) && 
-        ( A.m_total_input_depth == B.m_total_input_depth ) && 
+    if( ( A.m_total_output_depth == B.m_total_output_depth ) &&
+        ( A.m_total_input_depth == B.m_total_input_depth ) &&
         ( A.m_input_width < B.m_input_width ) )
     {
         return true;
     }
 
     if( ( A.m_total_output_depth == B.m_total_output_depth ) &&
-        (A.m_total_input_depth == B.m_total_input_depth) && 
-        ( A.m_input_width == B.m_input_width ) && 
+        (A.m_total_input_depth == B.m_total_input_depth) &&
+        ( A.m_input_width == B.m_input_width ) &&
         ( A.m_input_height < B.m_input_height ) )
     {
         return true;
@@ -333,7 +333,7 @@ bool operator < ( const conv_kernel_key &A, const conv_kernel_key &B )
         (A.m_output_depth == B.m_output_depth) &&
         (A.m_output_width == B.m_output_width) &&
         (A.m_output_height == B.m_output_height) &&
-        (A.m_output_start_z < B.m_output_start_z) 
+        (A.m_output_start_z < B.m_output_start_z)
         )
     {
         return true;
@@ -496,12 +496,12 @@ uint32_t ocl_toolkit::get_batch(
     const auto num_output_maps = num_filters;
 
 
-    conv_kernel_key conv_kernel_key_to_use( total_output_depth, total_input_depth, input_width, input_height, input_depth, 
+    conv_kernel_key conv_kernel_key_to_use( total_output_depth, total_input_depth, input_width, input_height, input_depth,
                                             input_start_x, input_start_y, input_start_z,
                                             filter_width, filter_height, filter_depth, num_filters,
                                             stride_x, stride_y, activation_function,
                                             output_width, output_height, num_output_maps,
-                                            output_start_z, output_w_pad_for_next_layer, output_h_pad_for_next_layer, 
+                                            output_start_z, output_w_pad_for_next_layer, output_h_pad_for_next_layer,
                                             output_buffer_offset, num_batches, image_as_output );
 
     auto g_kit = m_conv_kernels.find(conv_kernel_key_to_use);
@@ -555,7 +555,7 @@ conv_kernel_key ocl_toolkit::prepare_conv_kernel(
                                             filter_width, filter_height, filter_depth, num_filters,
                                             stride_x, stride_y, activation_function,
                                             output_width, output_height, num_output_maps,
-                                            output_start_z, output_w_pad_for_next_layer, output_h_pad_for_next_layer, 
+                                            output_start_z, output_w_pad_for_next_layer, output_h_pad_for_next_layer,
                                             output_buffer_offset, num_batches, image_as_output );
 
     auto g_kit = m_conv_kernels.find( conv_kernel_key_to_use );
@@ -590,14 +590,14 @@ conv_kernel_key ocl_toolkit::prepare_conv_kernel(
         extra_compile_args += " -DOWPAD=" + std::to_string( output_w_pad_for_next_layer );
         extra_compile_args += " -DOHPAD=" + std::to_string( output_h_pad_for_next_layer );
         extra_compile_args += " -DOUT_BUFF_OFFSET=" + std::to_string(output_buffer_offset);
-       
-        // Should the output area be a buffer or image 
+
+        // Should the output area be a buffer or image
         if(image_as_output == true) {
             extra_compile_args += " -DIMAGE_AS_OUTPUT";
-            // Padding for output is needed only when next layer need it 
+            // Padding for output is needed only when next layer need it
             // which is valid when next one is convolution
             // but when we need image as output then next one if FF
-            // so having image as ouput and non zero output_buffer_offset 
+            // so having image as ouput and non zero output_buffer_offset
             // is unsupported case.
             if(output_buffer_offset >= 0 ) {
                 THROW_ERROR(1, "Error: output padding in convolution when images are requested is not supported scenario! ");
@@ -643,7 +643,7 @@ conv_kernel_key ocl_toolkit::prepare_conv_kernel(
         {
             extra_compile_args += " -Dfilter_qualifier=__global";
         }
-                
+
         auto local_size = cl::NullRange;
         auto global_size = cl::NullRange;
         cl::NDRange offset = {0,0,output_start_z};
@@ -749,7 +749,7 @@ conv_kernel_key ocl_toolkit::prepare_conv_kernel(
             {
                 const auto last_block_width = ( output_width % output_block_width == 0 ) ? output_block_width : output_width % output_block_width;
                 const auto last_block_height = ( output_height % output_block_height == 0 ) ? output_block_height : output_height % output_block_height;
-                
+
                 global_size = { (output_width  + output_block_width - 1) / output_block_width,
                                 (output_height + output_block_height - 1) / output_block_height,
                                 num_batches * num_output_maps };
@@ -892,7 +892,7 @@ conv_kernel_key ocl_toolkit::prepare_conv_kernel(
             auto output_block_height = 7;
             kernel_name = "convolve_simd8";
             auto simd_size = req_simd_size =  8;
-            
+
             // AlexNet kernels are modified to process entire batch
             batched = num_batches;
 
@@ -1046,7 +1046,7 @@ conv_kernel_key ocl_toolkit::prepare_conv_kernel(
                 batched = 4;
             else
                 batched = 1;
-            
+
             auto grouping2 = 4;
             global_size = { num_output_maps * output_width / grouping2,
                             output_height,
@@ -1122,11 +1122,11 @@ conv_kernel_key ocl_toolkit::prepare_conv_kernel(
             kernel.reset(new conv_kernel_variants(make_kernels(kernels,
                                                                kernel_name,
                                                                extra_compile_args),
-                                                  global_size, local_size, offset, 
+                                                  global_size, local_size, offset,
                                                   make_kernels(kernels,
                                                                kernel_name,
                                                                extra_compile_args_resx),
-                                                  global_size_resx, offset_resx, 
+                                                  global_size_resx, offset_resx,
                                                   make_kernels(kernels,
                                                                kernel_name,
                                                                extra_compile_args_resy),
@@ -1144,7 +1144,7 @@ conv_kernel_key ocl_toolkit::prepare_conv_kernel(
 
         // Check if compiled kernel was made using SIMD size it was designed to be done
         // If that is not the case then start another compilation (diffrent definitions, diffrent kernel)
-        // TODO: restart the compilation 
+        // TODO: restart the compilation
         size_t simd_size = 0;
         auto err = kernel->m_kernel->getWorkGroupInfo(m_device,CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE,&simd_size);
         if(err != CL_SUCCESS) {
@@ -1288,16 +1288,16 @@ void ocl_toolkit::convolve( nn_cl_data            *output,
         if( retVal != CL_SUCCESS )
         {
             THROW_ERROR( retVal, " Error setting OpenCL kernel argument idx: 3 failed with error: " );
-        } 
+        }
 
-        // For buffer as output scenario we need offset in output buffer corresponding 
+        // For buffer as output scenario we need offset in output buffer corresponding
         // to selected batch we would like to process...
         uint32_t output_buffer_batch_offset = 0;
         if( output->parent->cl_buffer[0] != nullptr ) {
             output_buffer_batch_offset = batch * ( ( output_buffer_size / sizeof( float ) ) / num_batches );
         } else {
-            //...for images just batch number is enough as it 
-            //will be used as second coord (y) to adress output image 
+            //...for images just batch number is enough as it
+            //will be used as second coord (y) to adress output image
             output_buffer_batch_offset = batch;
         }
         retVal = ( g_kit->second ).m_kernel->setArg( 4, output_buffer_batch_offset );
@@ -1342,15 +1342,15 @@ void ocl_toolkit::convolve( nn_cl_data            *output,
                 THROW_ERROR( retVal, " Error setting OpenCL kernel argument idx: 3 failed with error: " );
             }
 
-            // For buffer as output scenario we need offset in output buffer corresponding 
+            // For buffer as output scenario we need offset in output buffer corresponding
             // to selected batch we would like to process...
             uint32_t output_buffer_batch_offset = 0;
             if( output->parent->cl_buffer[0] != nullptr ) {
                 output_buffer_batch_offset = batch * ( ( output_buffer_size / sizeof( float ) ) / num_batches );
             }
             else {
-                //...for images just batch number is enough as it 
-                //will be used as second coord (y) to adress output image 
+                //...for images just batch number is enough as it
+                //will be used as second coord (y) to adress output image
                 output_buffer_batch_offset = batch;
             }
             retVal = ( g_kit->second ).m_kernel_resx->setArg( 4, output_buffer_batch_offset );
@@ -1395,15 +1395,15 @@ void ocl_toolkit::convolve( nn_cl_data            *output,
                 THROW_ERROR( retVal, " Error setting OpenCL kernel argument idx: 3 failed with error: " );
             }
 
-            // For buffer as output scenario we need offset in output buffer corresponding 
+            // For buffer as output scenario we need offset in output buffer corresponding
             // to selected batch we would like to process...
             uint32_t output_buffer_batch_offset = 0;
             if( output->parent->cl_buffer[0] != nullptr ) {
                 output_buffer_batch_offset = batch * ( ( output_buffer_size / sizeof( float ) ) / num_batches );
             }
             else {
-                //...for images just batch number is enough as it 
-                //will be used as second coord (y) to adress output image 
+                //...for images just batch number is enough as it
+                //will be used as second coord (y) to adress output image
                 output_buffer_batch_offset = batch;
             }
             retVal = ( g_kit->second ).m_kernel_resy->setArg( 4, output_buffer_batch_offset );
@@ -1419,11 +1419,11 @@ void ocl_toolkit::convolve( nn_cl_data            *output,
         // data is  dynamically allocated
         // and pointer to it is passed to as data to callback mechanism
         // after using callback function will free dynamic allocation
-        
+
         exec_struct *psc = new exec_struct;
         static auto conv_layer_num = 1;
         psc->name = ( g_kit->second ).m_kernel_name + "(" + std::to_string( conv_layer_num ) + ")";
-    
+
         if( ( g_kit->second ).m_num_fmads != 0 )
         {
             psc->num_fmads = ( g_kit->second ).m_num_fmads;
@@ -1454,7 +1454,7 @@ void ocl_toolkit::convolve( nn_cl_data            *output,
         {
             exec_struct *psc1 = new exec_struct;
             psc1->name = ( g_kit->second ).m_kernel_name + "(" + std::to_string( conv_layer_num ) + "')";
-            
+
             psc1->num_fmads = ( g_kit->second ).m_num_fmads_resx;
 
             psc1->time_event = new cl::Event;
@@ -1478,11 +1478,11 @@ void ocl_toolkit::convolve( nn_cl_data            *output,
         {
             exec_struct *psc1 = new exec_struct;
             psc1->name = ( g_kit->second ).m_kernel_name + "(" + std::to_string( conv_layer_num ) + "\")";
-            
+
             psc1->num_fmads = ( g_kit->second ).m_num_fmads_resy;
 
             psc1->time_event = new cl::Event;
-    
+
             retVal = m_queue->enqueueNDRangeKernel( *( g_kit->second ).m_kernel_resy,
                                                     g_kit->second.m_offset_resy,
                                                     g_kit->second.m_gws_resy,

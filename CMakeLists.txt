@@ -66,6 +66,10 @@ message (STATUS "CMAKE_C_COMPILER_ID ................... " ${CMAKE_C_COMPILER_ID
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # To Enable C++11 gcc (Linux compiler) require additional flag to be added
+
+add_definitions(-DXBYAK_NO_OP_NAMES)
+add_definitions(-DUSE_XBYAK_CONVOLUTION)
+add_definitions(-DXBYAK_USE_MMAP_ALLOCATOR)
 if(UNIX)
   CHECK_CXX_COMPILER_FLAG("-std=c++11" COMPILER_SUPPORTS_CXX11)
   CHECK_CXX_COMPILER_FLAG("-std=c++0x" COMPILER_SUPPORTS_CXX0X)
@@ -80,7 +84,17 @@ if(UNIX)
     add_definitions(-mfma)
     add_definitions(-ffast-math)
   endif()
+  add_definitions(-fPIC)
+else()
+    add_definitions(-FIciso646) 
 endif()
+
+if(UNIX)
+  CHECK_CXX_COMPILER_FLAG("-fvisibility=hidden" COMPILER_SUPPORTS_VISIBILITY)
+  if (COMPILER_SUPPORTS_VISIBILITY)
+    add_definitions(-fvisibility=hidden)
+  endif(COMPILER_SUPPORTS_VISIBILITY)
+endif(UNIX)
 
 if( CMAKE_BUILD_TYPE STREQUAL "DebugULT")
     # Setup of DebugULT configuration(flags same as Debug)
@@ -132,7 +146,8 @@ if( CMAKE_BUILD_TYPE STREQUAL "Release")
     endif(UNIX)
 endif()
 
-include_directories ("${PROJECT_SOURCE_DIR}")
+include_directories (${PROJECT_SOURCE_DIR}
+                     ${PROJECT_SOURCE_DIR}/asmjit/src)
 
 if(UNIX) # On Linux Freeimage provided by host OS is used
   find_package(FreeImage)
@@ -142,8 +157,11 @@ else()   # For windows we will used FreeImage binary stored at repo
 endif()
 
 # Sub-directories where more CMakeLists.txt exist
+set(ASMJIT_STATIC TRUE)
+add_subdirectory(asmjit)
 add_subdirectory(device)
 add_subdirectory(tester)
 if (NOT (${CMAKE_BUILD_TYPE} STREQUAL "DebugULT"))
     add_subdirectory(demo)
 endif()
+

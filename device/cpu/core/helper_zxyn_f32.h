@@ -41,7 +41,7 @@ class primitive_zxyn_f32_base : public nn_primitive_t {
   public:
     virtual ~primitive_zxyn_f32_base() {}
 
-    virtual nn::workload_data<float> *map_input(const nn::data<float, 4> &input);
+    virtual nn::workload_data<> *map_input(const nn::data<float, 4> &input);
 
     virtual std::vector<nn_workload_data_t *> create_inputs(bool allocate_delta = false) override;
 

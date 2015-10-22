@@ -50,20 +50,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "demo/common/report_maker.h"
 #include "device/api/nn_primitives_api_0.h"
 #include "common/nn_data_tools.h"
-
-// returns list of files (path+filename) from specified directory
-std::vector<std::string> get_directory_contents(std::string images_path) {
-    std::vector<std::string> result;
-    if(DIR *folder = opendir(images_path.c_str())) {
-        dirent *folder_entry;
-        const auto image_file = std::regex(".*\\.(jpe?g|png|bmp|gif|j2k|jp2|tiff)");
-        while(folder_entry = readdir(folder))
-            if(std::regex_match(folder_entry->d_name, image_file) && is_regular_file(images_path, folder_entry) )
-                result.push_back(images_path+ "/" +folder_entry->d_name);
-        closedir(folder);
-    }
-    return result;
-}
+#include "common/common_tools.h"
 
 // RAII for library; throws runtime_error when fails
 struct scoped_library {
@@ -83,7 +70,7 @@ public:
     }
 };
 
-// RAII for device 
+// RAII for device
 class scoped_device_0 {
     scoped_library              &library_;
     decltype(nn_device_get_primitives_description) *get_primitives_description_;
@@ -193,7 +180,7 @@ Instead of "--" "-" or "/" can be used.
         }
 
         // load images from input directory
-        auto images_list = get_directory_contents(config["input"]);
+        auto images_list = get_directory_images(config["input"]);
         if(images_list.empty()) throw std::runtime_error(std::string("directory ")+config["input"]+" does not contain any images that can be processed");
 
         // RAII for loading library and device initialization
@@ -218,6 +205,7 @@ Instead of "--" "-" or "/" can be used.
             << std::endl;
 
         auto absolute_output_cmpl = new nn::data<float, 2>(1000, config_batch);
+        if(absolute_output_cmpl==nullptr)   throw std::runtime_error("Can't create temporary output buffer");
 
         std::vector<std::string>   batch_images;
         uint16_t                   image_counter = 0;     //numbering images within single batch
@@ -321,7 +309,7 @@ Instead of "--" "-" or "/" can be used.
         return -1;
     }
     catch(...) {
-        std::cout << "unknown error" << std::endl;
+        std::cout << "error: unknown" << std::endl;
         return -1;
     }
 }

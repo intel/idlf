@@ -81,27 +81,27 @@ void nn_data_marshaling_to_txt( nn_cl_data &data, std::string filename, nn_devic
         return;
 
     file.open( "dumps\\" + filename, std::ios::out | std::ios::trunc );
-    
+
     cl_int err;
     float* ptr = static_cast<float*>(
         clEnqueueMapBuffer(
             reinterpret_cast<device_gpu::ocl_toolkit *>(device)->get_command_queue()(),
             (*data.parent->cl_buffer[0])(),
-            true, 
-            CL_MEM_READ_ONLY, 
-            0, 
+            true,
+            CL_MEM_READ_ONLY,
+            0,
             data.parent->buffer_aligned_size,
             0,
             nullptr,
             nullptr,
-            &err)); 
+            &err));
 
     if (err != CL_SUCCESS)
         THROW_ERROR(err, "Error in mapping buffer at OUTPUT memcpy.");
 
-    nn::workload_data<float> temp( ptr, data.parent->lengths, data.parent->layout );
-    nn::workload_data<float> view( temp, data.view_begin, data.view_end );
-    
+    nn::workload_data<> temp( ptr, data.parent->lengths, data.parent->layout );
+    nn::workload_data<> view( temp, data.view_begin, data.view_end );
+
     auto view_size = view.get_length( );
 
     if( file.is_open( ) ) {
@@ -150,7 +150,7 @@ bool use_fully_connected_8x8(uint_least32_t num_inputs, uint_least32_t num_outpu
 bool is_image_as_output_needed(nn_workflow_item_t * flow_item, uint32_t batch, nn_device_t *device)
 {
     uint_least32_t input_width, input_height, input_depth;
-    uint_least32_t num_outputs; 
+    uint_least32_t num_outputs;
 
     // If next Layer is Fully connected and is to use images as input
     // then make current layer to produce image as output
@@ -270,7 +270,7 @@ void nn_workflow_compile_0_function_prepare_ocl_kernels(
             reinterpret_cast< device_gpu::ocl_toolkit * >( device )->prepare_norm_linear_single_kernel(
                                         output_layout,
                                         input_layout,
-                                        total_input_width, 
+                                        total_input_width,
                                         total_input_height,
                                         total_input_depth,
                                         flow_item->arguments.forward_normalization.normalization.alpha,
@@ -415,7 +415,7 @@ void nn_workflow_compile_0_function_prepare_ocl_kernels(
 
         reinterpret_cast< device_gpu::ocl_toolkit * >( device )->prepare_fully_connected_kernel(
             load_item->output->parent->cl_buffer[0] == nullptr,
-            input_width * input_height * input_depth, num_outputs, batch, 
+            input_width * input_height * input_depth, num_outputs, batch,
             activation_function );
 
         auto num_inputs = input_width * input_height * input_depth;
@@ -449,9 +449,9 @@ void nn_workflow_compile_0_function_prepare_ocl_kernels(
             input_end_x   = input_width - 1;
             input_end_y   = input_height - 1;
             input_end_y   = input_depth - 1;
-            total_input_width = input_width; 
-            total_input_height = input_height; 
-            total_input_depth = input_depth; 
+            total_input_width = input_width;
+            total_input_height = input_height;
+            total_input_depth = input_depth;
         }
         else
         {
@@ -552,7 +552,7 @@ void nn_workflow_compile_0_function_prepare_ocl_kernels(
                                                                                       );
 
         uint32_t kernel_batch = reinterpret_cast< device_gpu::ocl_toolkit * >(device)->get_batch(
-										   load_item->output->parent->cl_buffer[0] == nullptr,
+                                           load_item->output->parent->cl_buffer[0] == nullptr,
                                                                                    output_width, //Padding is not be mentioned in OCL kernel preparation
                                                                                    output_height,
                                                                                    output_start_z,
@@ -747,9 +747,9 @@ NN_API_STATUS nn_workload_item_output_start( nn_device_t *const context, nn_gpu_
     // Make sure all previous workload_items are computeed (finished)
     reinterpret_cast< device_gpu::ocl_toolkit * >( context )->finish();
 
-/*    ( reinterpret_cast<nn::workload_data<float> *>( work_item->output ) )->copy( (work_item->input[0]->output_view != nullptr) ? 
-                                                                                      *work_item->input[0]->output_view : 
-                                                                                      *reinterpret_cast<nn::workload_data<float> *>(work_item->input[0]->output) );*/
+/*    ( workload_data_cast<nn::layout_f32>( work_item->output ) )->copy( (work_item->input[0]->output_view != nullptr) ?
+                                                                                      *work_item->input[0]->output_view :
+                                                                                      *workload_data_cast<nn::layout_f32>(work_item->input[0]->output) );*/
 
     return NN_API_STATUS_OK;
 }
@@ -817,11 +817,11 @@ NN_API_STATUS nn_workload_item_normalization_start( nn_device_t *const          
     case NN_NORMALIZATION_MODE_LINEAR_SINGLE:
         return nn_workload_item_norm_linear_single_start( context, output_layout, input_layout, work_item );
         break;
-    
+
     case NN_NORMALIZATION_MODE_RESPONSE_ACROSS_MAPS:
         return nn_workload_item_normalization_same_map_start(context, work_item);
         break;
-    case NN_NORMALIZATION_MODE_CONTRAST: 
+    case NN_NORMALIZATION_MODE_CONTRAST:
     case NN_NORMALIZATION_MODE_RESPONSE_SAME_MAP:
     default:
         // TODO
@@ -833,7 +833,7 @@ NN_API_STATUS nn_workload_item_normalization_start( nn_device_t *const          
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 NN_API_STATUS nn_workload_item_full_connectivity_start(
     nn_device_t    *const context,
-    nn_gpu_workload_item *const work_item) 
+    nn_gpu_workload_item *const work_item)
 {
     assert( work_item->input.size() == 1 );    //TODO: so far one input is supported
 
@@ -939,7 +939,7 @@ NN_API_STATUS  nn_workload_item_arithmetic_start( nn_device_t *const          co
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 NN_API_STATUS nn_workload_item_convolution_start(
     nn_device_t    *const context,
-    nn_gpu_workload_item *const work_item) 
+    nn_gpu_workload_item *const work_item)
 {
     uint_least32_t num_batches =
         work_item->input[0]->output->view_end.t[NN_DATA_COORD_n ] -
@@ -998,14 +998,14 @@ NN_API_STATUS nn_workload_item_convolution_start(
 
     auto output_buffer_offset = ( work_item->output_h_pad_for_next_layer / 2 ) * work_item->output->parent->lengths.t[NN_DATA_COORD_x]
         + ( work_item->output_w_pad_for_next_layer / 2 );
-    
+
     // Run proper convolution depending if bias was used to output initialization or not
     reinterpret_cast< device_gpu::ocl_toolkit * >( context )->convolve(
         work_item->output,
         work_item->input[0]->output,
         work_item->arguments.forward_convolution.weights,
         work_item->arguments.forward_convolution.biases,
-        work_item->output->parent->lengths.t[NN_DATA_COORD_z],  //Total buffer depth 
+        work_item->output->parent->lengths.t[NN_DATA_COORD_z],  //Total buffer depth
         output_width,
         output_height,
         output_depth,
@@ -1095,7 +1095,7 @@ NN_API_STATUS nn_workload_item_conv_maxpool_start(
         2, 2, 2, 2,
         NN_POOLING_MODE_MAX
         );
-        
+
     return NN_API_STATUS_OK;
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1338,7 +1338,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
         auto copy_item =
         [device, input_format, output_format, batch, &flow_to_work]( nn_gpu_workload_item_t * load_item, nn_workflow_item_t * flow_item ){
 
-            nn_workload_data_layout_t layout = nn::workload_data<float>::layout.xyzpqn;
+            nn_workload_data_layout_t layout = nn::layout_t<nn::layout_xyzpqn_f32>::layout;
             // copy type & create nn_workload_data_t
             load_item->type = flow_item->type;
 
@@ -1363,19 +1363,19 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                         1, 1
                     };
 
-                    nn::workload_data< float > temp(size, layout);
+                    nn::workload_data<> temp(size, layout);
                     if(handy_routines::is_image_as_output_needed(flow_item,batch,device)) {
                         // image
                         load_item->output = new nn_cl_data(
                         reinterpret_cast<device_gpu::ocl_toolkit*>(device),
                         CL_MEM_READ_WRITE,
                         &temp,
-                        nullptr, 
+                        nullptr,
                         true,
                         size.t[1]*size.t[2]*size.t[3], // width*height*depth == num_inputs of next layer
-                        batch);        
+                        batch);
                     } else {
-                        // If next layer is convolution or convolution_pooling (merged one) then make input buffer here 
+                        // If next layer is convolution or convolution_pooling (merged one) then make input buffer here
                         // as well as subbuffers in ocl kernels preparation stage
                         // TODO: This step can be deferred to execute as well
                    //     if((flow_item->use[0]->type == NN_WORK_ITEM_TYPE_CONVOLUTION) || (flow_item->use[0]->type == NN_WORK_ITEM_TYPE_CONVOLUTION_POOLING_MAX_2x2_STRIDE_2x2))
@@ -1416,18 +1416,18 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                     1, 1
                 };
 
-                nn::workload_data< float > temp(size, layout);
-               
+                nn::workload_data<> temp(size, layout);
+
                 if(handy_routines::is_image_as_output_needed(flow_item,batch,device)) {
                     // image
                     load_item->output = new nn_cl_data(
                     reinterpret_cast<device_gpu::ocl_toolkit*>(device),
                     CL_MEM_READ_WRITE,
                     &temp,
-                    nullptr, 
+                    nullptr,
                     true,
                     size.t[1]*size.t[2]*size.t[3], // width*height*depth == num_inputs of next layer
-                    batch);        
+                    batch);
                 } else {
                     load_item->output = new nn_cl_data(
                         reinterpret_cast<device_gpu::ocl_toolkit*>(device),
@@ -1453,7 +1453,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                 else
                 {
 
-                    load_item->output_view.reset( new nn_cl_data( *load_item->output, 
+                    load_item->output_view.reset( new nn_cl_data( *load_item->output,
                                                                   load_item->output->view_begin, load_item->output->view_end ) );
                 }
 
@@ -1489,8 +1489,8 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                         load_item->output->view_end.t[3] - load_item->output->view_begin.t[3],
                         load_item->output->view_end.t[4] - load_item->output->view_begin.t[4],
                         load_item->output->view_end.t[5] - load_item->output->view_begin.t[5]
-                    );                   
-                   
+                    );
+
                     load_item->output_view.reset( new nn_cl_data( *load_item->output, start_coords, end_coords ) );
 
 
@@ -1506,8 +1506,8 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                         1, 1
                     };
                     // for INPUT node we do all intitialization in execute
-                    nn::workload_data<float> temp(size, layout);
-                    load_item->output = new nn_cl_data( 
+                    nn::workload_data<> temp(size, layout);
+                    load_item->output = new nn_cl_data(
                         reinterpret_cast<device_gpu::ocl_toolkit*>(device),
                         CL_MEM_READ_WRITE,
                         &temp);
@@ -1522,7 +1522,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                 auto input_data = flow_to_work[flow_item->input[0].item]->output;
                 nn_workload_data_layout_t previous_layout = input_data->parent->layout;
 
-                // Calculate total size needed for all input buffers of merge layer 
+                // Calculate total size needed for all input buffers of merge layer
 
                 uint16_t x_size = input_data->parent->lengths.t[1];
                 uint16_t y_size = input_data->parent->lengths.t[2];
@@ -1555,7 +1555,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                 //load_item->output = new nn_workload_data_t;
                 //nn_workload_data_placement_create(load_item->output, nullptr, &size, &previous_layout);
 
-                nn::workload_data<float> temp(size, previous_layout);
+                nn::workload_data<> temp(size, previous_layout);
                 load_item->output = new nn_cl_data(
                     reinterpret_cast<device_gpu::ocl_toolkit*>(device),
                     CL_MEM_READ_WRITE,
@@ -1602,18 +1602,18 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
 
                     delete flow_to_work[flow_item->input[index].item]->output;
                     flow_to_work[flow_item->input[index].item]->output = new nn_cl_data(*load_item->output, start_coords, end_coords);
-       
+
                     start_coords.t[1] = flow_to_work[flow_item->input[index].item]->output_view->view_begin.t[1];
                     start_coords.t[2] = flow_to_work[flow_item->input[index].item]->output_view->view_begin.t[2];
 
                     end_coords.t[1] = flow_to_work[flow_item->input[index].item]->output_view->view_end.t[1];
                     end_coords.t[2] = flow_to_work[flow_item->input[index].item]->output_view->view_end.t[2];
 
-                    
+
                     flow_to_work[flow_item->input[index].item]->output_view.reset(new nn_cl_data(*load_item->output, start_coords, end_coords));
-                    
+
                     //TODO: Instead of recompiling it is enough to find compiled kernel and change runtime params eg. GWS
- 
+
                     // Having changed the output we may need to adjust EnqueuNDRange offset here for all inputs of merge layer
                     handy_routines::nn_workflow_compile_0_function_prepare_ocl_kernels( device, NN_WORKLOAD_DATA_TYPE_F32_3D_BATCH, input_format[0], flow_to_work[flow_item->input[index].item], flow_item->input[index].item, batch);
                 }
@@ -1642,7 +1642,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                                                     , 1, 1 };
 
                 // convert nn_data to nn_workload_data
-                nn::workload_data<float> temp(flow_factor->buffer, size, layout);
+                nn::workload_data<> temp(flow_factor->buffer, size, layout);
 
                 load_item->arguments.forward_arithmetic.factor = new nn_cl_data(
                     reinterpret_cast<device_gpu::ocl_toolkit*>(device),
@@ -1658,7 +1658,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                     //TODO: validate bias format
                     nn_workload_data_coords_t size = {1, 1, 1, 1, static_cast<uint32_t>(flow_biases->size[0]), 1};
 
-                    nn::workload_data< float > temp(size, layout);
+                    nn::workload_data<nn::layout_f32> temp(size, layout);
                     for (size_t index = 0u; index<size.t[4]; ++index)
                         temp(0, 0, 0, 0, index, 0) = flow_biases->at(index);
 
@@ -1675,18 +1675,18 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                                                         , static_cast<uint32_t>(flow_weights->size[1])
                                                         , static_cast<uint32_t>(flow_weights->size[2])
                                                         , static_cast<uint32_t>(flow_weights->size[3]), 1 };
-                    nn::workload_data< float > temp( size, layout );
-                    
+                    nn::workload_data<nn::layout_f32> temp(size, layout);
+
                     auto stride_x = flow_item->arguments.forward_convolution.stride[0];
                     auto stride_y = flow_item->arguments.forward_convolution.stride[1];
 
-                    auto output_width  = flow_item->output_format[0].format_3d.size[0]; 
+                    auto output_width  = flow_item->output_format[0].format_3d.size[0];
                     auto output_height = flow_item->output_format[0].format_3d.size[1];
-                    auto output_depth  = flow_item->output_format[0].format_3d.size[2]; 
+                    auto output_depth  = flow_item->output_format[0].format_3d.size[2];
                     auto kernel_width  = flow_weights->size[0];
                     auto kernel_height = flow_weights->size[1];
                     auto input_depth   = flow_weights->size[2];
-                    
+
                     bool inv_mode = false; // TODO: better name?
 
                     auto swizzle_weights = [&](uint32_t weight_interleave, bool inv_mode)
@@ -1717,7 +1717,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                                                 *( dst++ ) = src[kc + src_stride_kr*kr + src_stride_i*id + src_stride_o*( out_depth_tile * weight_interleave + od )];
                         }
 
-                         
+
                     };
 
                     // TODO: This should be integrated with kernel choice and compilation in layer_convolution_opencl.cpp
@@ -1793,7 +1793,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                     auto flow_biases = nn::data_cast<float, 1>(flow_item->arguments.forward_fully_connected.biases);
                     //TODO: validate bias format
                     nn_workload_data_coords_t size = { 1, static_cast<uint32_t>(flow_biases->size[0]), 1, 1, 1, 1 };
-                    nn::workload_data< float > temp( size, layout );
+                    nn::workload_data<nn::layout_f32> temp(size, layout);
                     for(size_t x=0u; x<size.t[1]; ++x)
                         temp(0, x, 0, 0, 0, 0) = flow_biases->at(x);
 
@@ -1804,7 +1804,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                         temp.parent->data_buffer);
                 }
                 { // weights
-                  
+
                     switch(flow_item->arguments.forward_fully_connected.weights->dimension)
                     {
                         case 4:
@@ -1829,8 +1829,8 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                                     NN_DATA_COORD_z, NN_DATA_COORD_n, NN_DATA_COORD_q };
                             }
 
-                            nn::workload_data< float > temp( size, layout_fc );
-                            
+                            nn::workload_data<> temp( size, layout_fc );
+
                             auto src = static_cast<float *>( flow_weights->buffer );
                             auto dst = static_cast<float *>( temp.parent->data_buffer );
 
@@ -1918,20 +1918,20 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                         case 2:
                         {
                             auto flow_weights = nn::data_cast<float, 2>(flow_item->arguments.forward_fully_connected.weights);
-                            
+
                               //TODO: validate weight format
                             nn_workload_data_coords_t size = { 1, static_cast<uint32_t>(flow_weights->size[0])
                                                                 , static_cast<uint32_t>(flow_weights->size[1]), 1, 1, 1};
-                                                       
+
                             nn_workload_data_layout_t layout_fc = layout;
                             if( handy_routines::use_fully_connected_8x8( flow_weights->size[0], flow_weights->size[1], batch, device ) )
                             {
                                 // special ordering for "fully_connected_8x8" kernel
-                                layout_fc.ordering = { NN_DATA_COORD_y, NN_DATA_COORD_x, NN_DATA_COORD_z, 
+                                layout_fc.ordering = { NN_DATA_COORD_y, NN_DATA_COORD_x, NN_DATA_COORD_z,
                                                        NN_DATA_COORD_p, NN_DATA_COORD_n, NN_DATA_COORD_q };
                             }
-                            nn::workload_data< float > temp( size, layout_fc );
-                           
+                            nn::workload_data<> temp( size, layout_fc );
+
                             auto src = static_cast<float *>( flow_weights->buffer );
                             auto dst = static_cast<float *>( temp.parent->data_buffer );
 
@@ -2035,7 +2035,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                     auto flow_biases = nn::data_cast<float,1>(flow_item->arguments.forward_convolution_pooling_max_2x2_stride_2x2.biases);
                     //TODO: validate bias format
                     nn_workload_data_coords_t size = {1, 1, 1, 1, static_cast<uint32_t>(flow_biases->size[0]), 1};
-                    nn::workload_data< float > temp( size, layout );
+                    nn::workload_data<nn::layout_f32> temp(size, layout);
                     for(size_t index=0u; index<size.t[4]; ++index)
                         temp(0, 0, 0, 0, index, 0) = flow_biases->at(index);
 
@@ -2053,7 +2053,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_compile_0x0_function(
                                                         , static_cast<uint32_t>(flow_weights->size[2])
                                                         , static_cast<uint32_t>(flow_weights->size[3]), 1 };
 
-                    nn::workload_data< float > temp( size, layout );
+                    nn::workload_data<nn::layout_f32> temp(size, layout);
                     for(auto p=0u; p<size.t[4]; ++p)
                         for(auto z=0u; z<size.t[3]; ++z)
                             for(auto y=0u; y<size.t[2]; ++y)
@@ -2172,12 +2172,12 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0x0_function(
             switch (type) {
                     case NN_WORKLOAD_DATA_TYPE_F32_1D:
                     case NN_WORKLOAD_DATA_TYPE_F32_1D_BATCH:
-                        return nn::workload_data<float>::layout.xyzpqn;
+                        return nn::layout_t<nn::layout_xyzpqn_f32>::layout;
             case NN_WORKLOAD_DATA_TYPE_F32_ZXY_BATCH:
             case NN_WORKLOAD_DATA_TYPE_F32_ZXY:
-                return nn::workload_data<float>::layout.zxynpq;
+                return nn::layout_t<nn::layout_zxynpq_f32>::layout;
             default:
-                return nn::workload_data<float>::layout.xyzpnq;
+                return nn::layout_t<nn::layout_xyzpnq_f32>::layout;
             }
     };
 
@@ -2185,11 +2185,11 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0x0_function(
         uint32_t size_n=batch, size_x=1, size_y=1, size_z=1, size_p=1, size_q=1;
         switch(type) {
             case NN_WORKLOAD_DATA_TYPE_F32_3D_BATCH:
-            case NN_WORKLOAD_DATA_TYPE_F32_3D: 
+            case NN_WORKLOAD_DATA_TYPE_F32_3D:
                 size_z = data->size[2];
                 // fall through
-            case NN_WORKLOAD_DATA_TYPE_F32_2D_BATCH: 
-            case NN_WORKLOAD_DATA_TYPE_F32_2D: 
+            case NN_WORKLOAD_DATA_TYPE_F32_2D_BATCH:
+            case NN_WORKLOAD_DATA_TYPE_F32_2D:
                 size_y = data->size[1];
                 // fall through
             case NN_WORKLOAD_DATA_TYPE_F32_1D_BATCH:
@@ -2210,7 +2210,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0x0_function(
             case NN_WORKLOAD_DATA_TYPE_F32_ZXY_BATCH:
                 size_n = data->size[3];
                 break;
-            case NN_WORKLOAD_DATA_TYPE_F32_2D_BATCH: 
+            case NN_WORKLOAD_DATA_TYPE_F32_2D_BATCH:
                 size_n = data->size[2];
                 break;
             case NN_WORKLOAD_DATA_TYPE_F32_1D_BATCH:
@@ -2236,9 +2236,9 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0x0_function(
     // 2. We need to create new nn_data with our layout and make a copy of source input
     // 4. If no conversion is required then do not perform one
     // 5. Delete our no longer needed workload data
-    using auto_delete_workload_data = std::unique_ptr<nn::workload_data<float>>;
-    auto_delete_workload_data workload_input(new nn::workload_data<float>(workload_input_data->buffer, workload_input_size, input_layout));
-    auto_delete_workload_data workload_output(new nn::workload_data<float>(workload_output_data->buffer, workload_output_size, output_layout));
+    using auto_delete_workload_data = std::unique_ptr<nn::workload_data<>>;
+    auto_delete_workload_data workload_input(new nn::workload_data<>(workload_input_data->buffer, workload_input_size, input_layout));
+    auto_delete_workload_data workload_output(new nn::workload_data<>(workload_output_data->buffer, workload_output_size, output_layout));
 
     // Check if VIEW is the second node if that is the case then create nn_data for that view
     if(gpu_workload->m_workload_items[1]->type == NN_WORK_ITEM_TYPE_VIEW) {
@@ -2275,8 +2275,8 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0x0_function(
                     // Next Layer may expect image as input so then output of this layer has to be image
                     // and then we map existing image to copy user input into it
 
-                    // If no buffer/image exists then we create one using USE_MEM_HOST_PTR 
-                    if(gpu_workload->m_workload_items[0]->output == nullptr)  
+                    // If no buffer/image exists then we create one using USE_MEM_HOST_PTR
+                    if(gpu_workload->m_workload_items[0]->output == nullptr)
                     {
                         gpu_workload->m_workload_items[0]->output = new nn_cl_data(
                         reinterpret_cast<device_gpu::ocl_toolkit *>(workload->device),
@@ -2291,20 +2291,20 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0x0_function(
                                 CL_FALSE,
                                 0,
                                 workload_input_data->count()*sizeof(float),
-                                workload_input_data->buffer,                           
+                                workload_input_data->buffer,
                                 0,
                                 nullptr,
                                 nullptr);
                     } else {
-    
+
                         // If image here is a nullptr then we are doing something very wrong
                         assert(gpu_workload->m_workload_items[0]->output->parent->cl_image[0] != nullptr);
 
-                        // Region is (width*height*depth,num_batches,1) 
-                        size_t origin[3] = {0,0,0};                        
+                        // Region is (width*height*depth,num_batches,1)
+                        size_t origin[3] = {0,0,0};
                         size_t image_width =(*it)->output->parent->lengths.t[NN_DATA_COORD_x]*(*it)->output->parent->lengths.t[NN_DATA_COORD_y]*(*it)->output->parent->lengths.t[NN_DATA_COORD_z];
                         size_t image_height = (*it)->output->parent->lengths.t[NN_DATA_COORD_n];
-                        size_t region[3] = {image_width, image_height, 1};                        
+                        size_t region[3] = {image_width, image_height, 1};
 
                         err = clEnqueueWriteImage(
                                 reinterpret_cast<device_gpu::ocl_toolkit *>(workload->device)->get_command_queue()(),
@@ -2314,7 +2314,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0x0_function(
                                 region,
                                 0,
                                 0,
-                                workload_input_data->buffer,                           
+                                workload_input_data->buffer,
                                 0,
                                 nullptr,
                                 nullptr);
@@ -2329,7 +2329,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0x0_function(
                 // Nothing here to be done
                 break;
             case NN_WORK_ITEM_TYPE_OUTPUT:
-                // Copy from output work_item to 
+                // Copy from output work_item to
                 {
                     reinterpret_cast< device_gpu::ocl_toolkit * >(workload->device)->finish();
 
@@ -2340,20 +2340,20 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0x0_function(
                         clEnqueueMapBuffer(
                             reinterpret_cast<device_gpu::ocl_toolkit *>(workload->device)->get_command_queue()(),
                             (*previous_item_output->parent->cl_buffer[0])(),
-                            true, 
-                            CL_MEM_READ_ONLY, 
-                            0, 
+                            true,
+                            CL_MEM_READ_ONLY,
+                            0,
                             previous_item_output->parent->buffer_aligned_size,
                             0,
                             nullptr,
                             nullptr,
-                            &err)); 
+                            &err));
 
                     if (err != CL_SUCCESS)
                         THROW_ERROR(err, "Error in mapping buffer at OUTPUT memcpy.");
 
-                    nn::workload_data<float> temp(ptr, previous_item_output->parent->lengths, previous_item_output->parent->layout);
-                    nn::workload_data<float> view(temp, workload_output->view_begin, workload_output->view_end);
+                    nn::workload_data<> temp(ptr, previous_item_output->parent->lengths, previous_item_output->parent->layout);
+                    nn::workload_data<> view(temp, workload_output->view_begin, workload_output->view_end);
 
                     *workload_output = view;
 
@@ -2410,7 +2410,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0x0_function(
             {
                 std::string filename = "layer_" + std::to_string( layer ) + "_type_" + std::to_string( ( *it )->type ) + "_" + layer_name(**it) + "_output_padded.txt";
                 nn_data_marshaling_to_txt(  *( *it )->output , filename, workload->device );
-                
+
                 filename = "layer_" + std::to_string( layer ) + "_type_" + std::to_string( ( *it )->type ) + "_" + layer_name( **it ) + "_output.txt";
                 nn_data_marshaling_to_txt( *( *it )->output_view, filename, workload->device );
             }
@@ -2425,14 +2425,14 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0x0_function(
 
             // This is example of tools used for debugging:
             //  - casting output of our data into one matching CPU device
-            //  - modifying output of selected layer 
+            //  - modifying output of selected layer
             //  Note: It all does work when execution on GPU took place eg. finish was called.
-            #if 0 
+            #if 0
             reinterpret_cast< device_gpu::ocl_toolkit * >( workload->device )->finish();
             nn_workload_data_layout_t cpu_layout = {
                 { 0, 0, 0, 0, 0, 0 }, // tile in log2(size)
                 { 0, 0, 0, 0, 0, 0 }, // alignment
-                nn::workload_data<float>::layout.nxyzpq, // ordering (FF and softmax got it N,X as oppose to Z,X,Y)
+                nn::workload_data<>::layout.nxyzpq, // ordering (FF and softmax got it N,X as oppose to Z,X,Y)
                 NN_DATATYPE_FLOAT
             };
             nn_workload_data_coords_t cpu_size =
@@ -2445,10 +2445,10 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0x0_function(
                 (*it)->output->parent->lengths.t[5]
             };
             if( (*it)->type == NN_WORK_ITEM_TYPE_NORMALIZATION )  {
-                ; 
+                ;
                 //for(int z = 0; z< 3; ++z)  {
-                //for(int j = 0; j < 231; ++j) {           
-                    //for(int k = 0; k < 231; ++k) {           
+                //for(int j = 0; j < 231; ++j) {
+                    //for(int k = 0; k < 231; ++k) {
                        //nn_workload_data_set_float32( (*it)->output,z + j*100.0f + k*10.0f,0,k,j,z,0,0);
                     //}
                 //}
@@ -2456,8 +2456,8 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_execute_0x0_function(
             }
 
             if(  ((*it)->type == NN_WORK_ITEM_TYPE_SOFTMAX) )  {
-                nn::workload_data< float > *cpu_output = new nn::workload_data< float >( cpu_size, cpu_layout );
-                nn::workload_data<float> *gpu_output  = reinterpret_cast<nn::workload_data<float> *>( (*it)->output);
+                nn::workload_data<> *cpu_output = new nn::workload_data<>( cpu_size, cpu_layout );
+                nn::workload_data<> *gpu_output  = workload_data_cast<nn::layout_f32>( (*it)->output);
                 nn_workload_data_copy( gpu_output, cpu_output);
                 delete cpu_output;
             }

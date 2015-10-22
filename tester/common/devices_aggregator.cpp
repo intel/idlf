@@ -34,7 +34,7 @@ tested_device::tested_device(std::string _filename): filename(_filename)
 {
 
     device_handle = dlopen( filename.c_str(), RTLD_LAZY);
-    if(!device_handle) throw std::runtime_error(std::string("failed to open '")+filename+"' device");
+    if(!device_handle) throw std::runtime_error(std::string("failed to open '"+filename+"' device, reason-> " + dlerror()));
 
     device_load     = dlsym<decltype(nn_device_load)>("nn_device_load");
     device_unload   = dlsym<decltype(nn_device_unload)>("nn_device_unload");

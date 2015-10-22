@@ -34,7 +34,7 @@ This file contains API for interface version 0.
 Dictionary:
 
 <workflow item>
-    Node that performs calculations. It has its arguments (parameters) and inputs. 
+    Node that performs calculations. It has its arguments (parameters) and inputs.
 
 <workflow item:argument>s
     Arguments are fixed state, that depend on type of <workflow item>.
@@ -47,13 +47,13 @@ Dictionary:
     Links to other <workflow item>s that create data that current <workflow item> uses.
 
 <workflow>
-    Container of <workflow item>s that define data flow graph. Inputs & outputs 
+    Container of <workflow item>s that define data flow graph. Inputs & outputs
     of this graph become inputs & outputs of compiled <workload>.
     This is why <workflow> itself is a "calculation described as data flow".
     Its data structure allows forward (in->out) & backward (out->in) graph traversal.
 
 <workload>
-    Device specific representation, created by compiling <workflow>. 
+    Device specific representation, created by compiling <workflow>.
     Contains count and list of formats for inputs & outputs and reference to
     device that compiled it.
     Other parts of structure are device-specific, and not user-accessable.
@@ -69,7 +69,7 @@ From creation to execution:
 
 [fill workflow with items]
     User creates <workflow item>s. Items are connected to each other creating
-    a data flow graph. 
+    a data flow graph.
     Special "input" and "output" <workflow items>s represent input from and
     output to <workflow>.
     Example of <workflow> filled with <workflow items>:
@@ -133,6 +133,8 @@ typedef enum {
     NN_WORK_ITEM_TYPE_RELU_3D,                  /* rectified linear unit activation layer, std::max(0,x) */
 
     /* training-specific items*/
+    NN_WORK_ITEM_TYPE_SOFTMAX_LOSS,             /* softmax with merged special version of multinomial loss */
+    NN_WORK_ITEM_TYPE_SOFTMAX_LOSS_BACKPROP,    /* softmax_loss backprop */
     NN_WORK_ITEM_TYPE_AVERAGE_DELTAS,           /* computes average deltas from batch */
     NN_WORK_ITEM_TYPE_DROPOUT,                  /* randomly vanish data */
     NN_WORK_ITEM_TYPE_DROPOUT_BACKPROP,         /* randomly vanish errors */
@@ -265,7 +267,7 @@ typedef struct nn_output_format {
    Contains type and parameters per type (if they exist). */
 typedef struct nn_argument_activation_fixedpoint {
     nn_argument_activation_t  basic_arguments;
-    struct 
+    struct
     {
         uint16_t accumulator;                   /* number of fractional bits in the accumulator */
         uint16_t output;                        /* number of fractional bits in the output value */
@@ -276,13 +278,12 @@ typedef struct nn_argument_activation_fixedpoint {
 /* container for normalization function arguments */
 typedef struct nn_argument_normalization {
     NN_NORMALIZATION_MODE   mode;               /* type of normalization */
-    float                   alpha;              /* alpha in onrmalization equations */
+    float                   alpha;              /* alpha in normalization equations */
     float                   beta;               /* beta in normalization equations */
-    uint32_t                k;                  /* k in normalization equations */
+    float                   k;                  /* k in normalization equations */
     uint32_t                n;                  /* n in normalization equations */
     uint32_t                size;               /* normalization size */
 } nn_argument_normalization_t;
-
 
 /* symbolic input
    Contains buffer passed to a workload as an input.
@@ -290,7 +291,6 @@ typedef struct nn_argument_normalization {
 typedef struct nn_arguments_input {
     uint32_t                    index;          /* input index */
 } nn_arguments_input_t;
-
 
 typedef struct nn_arguments_update
 {
@@ -307,7 +307,7 @@ typedef struct nn_arguments_loss_function
     NN_LOSS_FUNCTION            function;  /* type of loss function */
 } nn_arguments_loss_function_t;
 
-/* symbolic output 
+/* symbolic output
    Contains buffer passed to a workload as an output.
    Index identifies input when workload has more than 1 output. */
 typedef struct nn_arguments_output {
@@ -356,9 +356,11 @@ typedef struct nn_arguments_forward_fully_connected {
 
 /* arguments for pooling layers */
 typedef struct nn_arguments_forward_pooling {
-    uint32_t                    stride[2];      /* stride during filtering operation */
-    uint32_t                    size[2];        /* pooling area size */
-    NN_POOLING_MODE             mode;           /* pooling mode */
+    NN_PADDING_MODE             padding;            /* padding mode */
+    uint32_t                    center_offset[2];   /* offset of center point in convolution filter */
+    uint32_t                    stride[2];          /* stride during filtering operation */
+    uint32_t                    size[2];            /* pooling area size */
+    NN_POOLING_MODE             mode;               /* pooling mode */
 } nn_arguments_forward_pooling_t;
 
 
@@ -367,6 +369,7 @@ typedef struct nn_arguments_forward_pooling {
 
 /* arguments for normalization layers */
 typedef struct nn_arguments_forward_normalization {
+    NN_PADDING_MODE             padding;        /* padding mode */
     nn_argument_normalization_t normalization;  /* normalization data */
 } nn_arguments_forward_normalization_t;
 
@@ -448,12 +451,15 @@ typedef struct nn_arguments_forward_merged_convolution_pooling_max_2x2_stride_2x
 /* arguments for merged convolution and pooling layers fixed point */
 typedef struct nn_arguments_forward_pooling_fixedpoint
 {
+    NN_PADDING_MODE             padding;            /* padding mode */
+    uint32_t                    center_offset[2];   /* offset of center point in convolution filter */
     uint32_t                    pool_size[2];    /* max-pooling size */
     uint32_t                    pool_stride[2];  /* max-pooling stride */
+    NN_POOLING_MODE             mode;               /* pooling mode */
 } nn_arguments_forward_pooling_fixedpoint_t;
 
 /* workflow item is a representation of a single calculation (for example a single convolution).
-   It contains asynchronous calculation state (created, in progress, finished, error) and all parameters 
+   It contains asynchronous calculation state (created, in progress, finished, error) and all parameters
    required for processing. */
 typedef struct nn_workflow_item {
     /* following fields are set by the user */
@@ -508,12 +514,6 @@ typedef struct nn_workflow_item {
 typedef struct nn_workflow_use_descriptor {
     nn_workflow_item *  item;
     uint32_t            index;
-
-    bool operator ==(const nn_workflow_use_descriptor& ref)
-    {
-        return (item == ref.item) && (index == ref.index);
-    }
-
 } nn_workflow_use_descriptor_t;
 
 /* workflow contains entire network topolgy
@@ -561,6 +561,13 @@ typedef struct nn_workflow_metrics_array {
     nn_workflow_metrics_t **array;      /* array of variant entries */
 } nn_workflow_metrics_array_t;
 
+typedef struct nn_workload_params {
+    const char *name;
+    NN_WORK_ITEM_TYPE type;
+    uint32_t    dimensions;
+    uint32_t   *sizes;
+    void       *handler;
+} nn_workload_params_t;
 
 /* function pointers to API calls ****************************************************************/
 
@@ -706,6 +713,21 @@ typedef NN_API_STATUS (NN_API_CALL_CONVENTION *nn_translate_api_status_function_
     );
 
 
+typedef NN_API_STATUS (NN_API_CALL_CONVENTION *nn_workload_query_param_function_t)(
+    nn_workload_t          *workload_public, /* workload to be queried */
+    nn_workload_params    **params,          /* returns list of parameters found in workload along with their sizes */
+    uint32_t               *num_params       /* number of params returned */
+    );
+
+typedef NN_API_STATUS (NN_API_CALL_CONVENTION *nn_workload_recover_param_function_t)(
+    nn_workload_t          *workload_public, /* workload to be queried */
+    char                   *param_name,      /* name of parameter to recover */
+    nn_data                *data             /* data will be returned to this pointer */
+    );
+
+typedef NN_API_STATUS (NN_API_CALL_CONVENTION *nn_set_use_jit_primitives_t)(
+    int flag                                 /* flag to enable/disable jit primitives (use with forward and batch 24n only) */
+    );
 
 /* interface structure *******************************************************/
 
@@ -728,6 +750,9 @@ typedef struct nn_device_interface_0_t {
     nn_device_parameter_get_function_t              parameter_get_function;
     nn_device_parameter_set_function_t              parameter_set_function;
     nn_translate_api_status_function_t              translate_api_status_function;
+    nn_workload_query_param_function_t              workload_query_param_function;
+    nn_workload_recover_param_function_t            workload_recover_param_function;
+    nn_set_use_jit_primitives_t                     use_jit_primitives;
 } nn_device_interface_0_t;
 
 
@@ -740,8 +765,8 @@ struct output_format : public ::nn_output_format {
     output_format(uint32_t arg_x, uint32_t arg_y,                 NN_DATA_FORMAT arg_format = NN_DATA_FORMAT_2D) { format = arg_format; format_2d = { { arg_x, arg_y } }; }
     output_format(uint32_t arg_x, uint32_t arg_y, uint32_t arg_z, NN_DATA_FORMAT arg_format = NN_DATA_FORMAT_3D) { format = arg_format; format_3d = { { arg_x, arg_y, arg_z } }; }
 
-    uint32_t size(uint32_t index) 
-    { 
+    uint32_t size(uint32_t index)
+    {
         // Validate
         switch(format)
         {

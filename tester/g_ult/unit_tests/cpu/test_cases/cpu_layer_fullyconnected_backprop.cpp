@@ -171,32 +171,32 @@ namespace
     nn_workload_item_t* get_backprop(
         nn_workload_t* workload)
     {
-        nn_workload_opaque_t* workload_opaque = reinterpret_cast<nn_workload_opaque_t*>(workload + 1);
+        nn_workload_opaque_t* workload_opaque = static_cast<nn_workload_opaque_t*>(workload);
         nn_workload_item_t *workload_backprop = workload_opaque->order_of_execution.back();
         assert(workload_backprop->type == NN_WORK_ITEM_TYPE_FULLY_CONNECTED_BACKPROP);
 
         return workload_backprop;
     }
 
-    void backward_naive(const nn::workload_data<float> *forward_input_view,
-                        const nn::workload_data<float> *forward_weights_view,
-                        const nn::workload_data<float> *forward_output_view,
-                        const nn::workload_data<float> *backward_input_view,
-                        nn::workload_data<float> *backward_output_view,
-                        nn::workload_data<float> *backward_weights_delta_view,
-                        nn::workload_data<float> *backward_bias_delta_view)
+    void backward_naive(const nn::workload_data<nn::layout_f32> *forward_input_view,
+                        const nn::workload_data<nn::layout_f32> *forward_weights_view,
+                        const nn::workload_data<nn::layout_f32> *forward_output_view,
+                        const nn::workload_data<nn::layout_f32> *backward_input_view,
+                        nn::workload_data<nn::layout_f32> *backward_output_view,
+                        nn::workload_data<nn::layout_f32> *backward_weights_delta_view,
+                        nn::workload_data<nn::layout_f32> *backward_bias_delta_view)
     {
         const auto& in_begin = forward_input_view->view_begin;
         const auto& in_end = forward_input_view->view_end;
         const auto& out_begin = forward_output_view->view_begin;
         const auto& out_end = forward_output_view->view_end;
 
-        nn::workload_data<float> forward_input_buffer(forward_input_view->parent->data_buffer, forward_input_view->parent->lengths, forward_input_view->parent->layout);
-        nn::workload_data<float> forward_weights_buffer(forward_weights_view->parent->data_buffer, forward_weights_view->parent->lengths, forward_weights_view->parent->layout);
-        nn::workload_data<float> backward_input_buffer(backward_input_view->parent->data_buffer, backward_input_view->parent->lengths, backward_input_view->parent->layout);
-        nn::workload_data<float> backward_output_buffer(backward_output_view->parent->data_buffer, backward_output_view->parent->lengths, backward_output_view->parent->layout);
-        nn::workload_data<float> backward_weights_delta_buffer(backward_weights_delta_view->parent->data_buffer, backward_weights_delta_view->parent->lengths, backward_weights_delta_view->parent->layout);
-        nn::workload_data<float> backward_bias_delta_buffer(backward_bias_delta_view->parent->data_buffer, backward_bias_delta_view->parent->lengths, backward_bias_delta_view->parent->layout);
+        nn::workload_data<nn::layout_f32> forward_input_buffer(forward_input_view->parent->data_buffer, forward_input_view->parent->lengths, forward_input_view->parent->layout);
+        nn::workload_data<nn::layout_f32> forward_weights_buffer(forward_weights_view->parent->data_buffer, forward_weights_view->parent->lengths, forward_weights_view->parent->layout);
+        nn::workload_data<nn::layout_f32> backward_input_buffer(backward_input_view->parent->data_buffer, backward_input_view->parent->lengths, backward_input_view->parent->layout);
+        nn::workload_data<nn::layout_f32> backward_output_buffer(backward_output_view->parent->data_buffer, backward_output_view->parent->lengths, backward_output_view->parent->layout);
+        nn::workload_data<nn::layout_f32> backward_weights_delta_buffer(backward_weights_delta_view->parent->data_buffer, backward_weights_delta_view->parent->lengths, backward_weights_delta_view->parent->layout);
+        nn::workload_data<nn::layout_f32> backward_bias_delta_buffer(backward_bias_delta_view->parent->data_buffer, backward_bias_delta_view->parent->lengths, backward_bias_delta_view->parent->layout);
 
         auto batch_size = forward_input_buffer.parent->lengths.t[NN_DATA_COORD_n];
 
@@ -252,8 +252,8 @@ namespace
         uint32_t slice_remainder = 0,
         bool is_weight = false)
     {
-        nn::workload_data<float> data(data_item->parent->data_buffer, data_item->parent->lengths, data_item->parent->layout);
-        nn::workload_data<float> reference(data_item_ref->parent->data_buffer, data_item_ref->parent->lengths, data_item_ref->parent->layout);
+        nn::workload_data<nn::layout_f32> data(data_item->parent->data_buffer, data_item->parent->lengths, data_item->parent->layout);
+        nn::workload_data<nn::layout_f32> reference(data_item_ref->parent->data_buffer, data_item_ref->parent->lengths, data_item_ref->parent->layout);
 
         auto& size = data_item->parent->lengths;
         for (auto n = 0u; n < size.t[0]; ++n)
@@ -282,7 +282,7 @@ namespace
                                 }
                                 else
                                 {
-                                    if (fabs(diff / value_ref) > 5.2e-05F)
+                                    if (fabs(diff / value_ref) > 1.0e-03F)
                                     {
                                         return false;
                                     }
@@ -293,13 +293,13 @@ namespace
     }
 
     void run_primitives_api(
-        nn::workload_data<float> *forward_input,
-        nn::workload_data<float> *forward_weights,
-        nn::workload_data<float> *forward_output,
-        nn::workload_data<float> *backward_input,
-        nn::workload_data<float> *backward_output,
-        nn::workload_data<float> *backward_weights_delta,
-        nn::workload_data<float> *backward_bias_delta)
+        nn::workload_data<> *forward_input,
+        nn::workload_data<> *forward_weights,
+        nn::workload_data<> *forward_output,
+        nn::workload_data<> *backward_input,
+        nn::workload_data<> *backward_output,
+        nn::workload_data<> *backward_weights_delta,
+        nn::workload_data<> *backward_bias_delta)
     {
         nn_device_primitives_description_t device_primitives_description;
         nn_device_get_primitives_description(&device_primitives_description);
@@ -408,11 +408,11 @@ namespace
 
         for (uint32_t n = 0; n < input_datas[0]->size[1]; ++n)
             for (uint32_t x = 0; x < input_datas[0]->size[0]; ++x)
-                (*input_datas[0])(x, n) = 1.0f;
+                (*input_datas[0])(x, n) = 1.0f * static_cast<float>(x + n);
 
         for (uint32_t n = 0; n < input_datas[1]->size[1]; ++n)
             for (uint32_t x = 0; x < input_datas[1]->size[0]; ++x)
-                (*input_datas[1])(x, n) = 0.5f;
+                (*input_datas[1])(x, n) = 0.5f * static_cast<float>(x + n);
 
         // Get refernces to all buffers used by fc and its backprop.
         // "Inputs" to backprop.
@@ -428,9 +428,9 @@ namespace
         auto backward_bias_delta = fc_backprop->output[2];
 
         // Create reference outputs with same layout and sizes.
-        nn::workload_data<float> ref_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
-        nn::workload_data<float> ref_backward_weight_delta(backward_weight_delta->parent->lengths, backward_weight_delta->parent->layout);
-        nn::workload_data<float> ref_backward_bias_delta(backward_bias_delta->parent->lengths, backward_bias_delta->parent->layout);
+        nn::workload_data<nn::layout_f32> ref_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
+        nn::workload_data<nn::layout_f32> ref_backward_weight_delta(backward_weight_delta->parent->lengths, backward_weight_delta->parent->layout);
+        nn::workload_data<nn::layout_f32> ref_backward_bias_delta(backward_bias_delta->parent->lengths, backward_bias_delta->parent->layout);
 
         std::memset(ref_backward_error_delta.parent->data_buffer, 0, ref_backward_error_delta.parent->buffer_size);
         std::memset(ref_backward_weight_delta.parent->data_buffer, 0, ref_backward_weight_delta.parent->buffer_size);
@@ -441,12 +441,11 @@ namespace
         EXPECT_EQ(NN_API_STATUS_OK, di.workload_execute_function(workload, (void **)input_datas, nullptr, &status));
 
         // Run naive code.
-        forward_input->parent->data_buffer = input_datas[0]->buffer;
         backward_naive(
-            static_cast<nn::workload_data<float>*>(forward_input),
-            static_cast<nn::workload_data<float>*>(forward_weight),
-            static_cast<nn::workload_data<float>*>(forward_output),
-            static_cast<nn::workload_data<float>*>(backward_input),
+            static_cast<nn::workload_data<nn::layout_f32>*>(forward_input),
+            static_cast<nn::workload_data<nn::layout_f32>*>(forward_weight),
+            static_cast<nn::workload_data<nn::layout_f32>*>(forward_output),
+            static_cast<nn::workload_data<nn::layout_f32>*>(backward_input),
             &ref_backward_error_delta,
             &ref_backward_weight_delta,
             &ref_backward_bias_delta);
@@ -454,18 +453,18 @@ namespace
         const uint32_t C_max_accumulators = (batch == 8) ? 13 : 2;
 
         // Run optimized code through primitive API
-        nn::workload_data<float> primitive_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
-        nn::workload_data<float> primitive_backward_weight_delta(backward_weight_delta->parent->lengths, backward_weight_delta->parent->layout);
-        nn::workload_data<float> primitive_backward_bias_delta(backward_bias_delta->parent->lengths, backward_bias_delta->parent->layout);
+        nn::workload_data<> primitive_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
+        nn::workload_data<> primitive_backward_weight_delta(backward_weight_delta->parent->lengths, backward_weight_delta->parent->layout);
+        nn::workload_data<> primitive_backward_bias_delta(backward_bias_delta->parent->lengths, backward_bias_delta->parent->layout);
         std::memset(primitive_backward_error_delta.parent->data_buffer, 0, ref_backward_error_delta.parent->buffer_size);
         std::memset(primitive_backward_weight_delta.parent->data_buffer, 0, ref_backward_weight_delta.parent->buffer_size);
         std::memset(primitive_backward_bias_delta.parent->data_buffer, 0, ref_backward_bias_delta.parent->buffer_size);
 
         run_primitives_api(
-            static_cast<nn::workload_data<float>*>(forward_input),
-            static_cast<nn::workload_data<float>*>(forward_weight),
-            static_cast<nn::workload_data<float>*>(forward_output),
-            static_cast<nn::workload_data<float>*>(backward_input),
+            static_cast<nn::workload_data<>*>(forward_input),
+            static_cast<nn::workload_data<>*>(forward_weight),
+            static_cast<nn::workload_data<>*>(forward_output),
+            static_cast<nn::workload_data<>*>(backward_input),
             &primitive_backward_error_delta,
             &primitive_backward_weight_delta,
             &primitive_backward_bias_delta);
@@ -482,17 +481,17 @@ namespace
             auto weight_index = dis_weight(gen) / C_max_accumulators * C_max_accumulators;
             auto bias_index = dis_bias(gen);
 
-            static_cast<float*>(backward_error_delta->parent->data_buffer)[error_index] += 1.0f;
-            static_cast<float*>(backward_weight_delta->parent->data_buffer)[weight_index] += 1.0f;
-            static_cast<float*>(backward_bias_delta->parent->data_buffer)[bias_index] += 1.0f;
+            static_cast<float*>(backward_error_delta->parent->data_buffer)[error_index] += 100.0f;
+            static_cast<float*>(backward_weight_delta->parent->data_buffer)[weight_index] += 100.0f;
+            static_cast<float*>(backward_bias_delta->parent->data_buffer)[bias_index] += 100.0f;
 
             EXPECT_NE(true, compare_data_items(backward_error_delta, &ref_backward_error_delta));
             EXPECT_NE(true, compare_data_items(backward_weight_delta, &ref_backward_weight_delta, output_fmaps % C_max_accumulators, true));
             EXPECT_NE(true, compare_data_items(backward_bias_delta, &ref_backward_bias_delta));
 
-            static_cast<float*>(primitive_backward_error_delta.parent->data_buffer)[error_index] += 1.0f;
-            static_cast<float*>(primitive_backward_weight_delta.parent->data_buffer)[weight_index] += 1.0f;
-            static_cast<float*>(primitive_backward_bias_delta.parent->data_buffer)[bias_index] += 1.0f;
+            static_cast<float*>(primitive_backward_error_delta.parent->data_buffer)[error_index] += 100.0f;
+            static_cast<float*>(primitive_backward_weight_delta.parent->data_buffer)[weight_index] += 100.0f;
+            static_cast<float*>(primitive_backward_bias_delta.parent->data_buffer)[bias_index] += 100.0f;
 
             EXPECT_NE(true, compare_data_items(&primitive_backward_error_delta, &ref_backward_error_delta));
             EXPECT_NE(true, compare_data_items(&primitive_backward_weight_delta, &ref_backward_weight_delta));

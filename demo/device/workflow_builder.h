@@ -51,6 +51,8 @@ public:
     uint16_t  get_img_size() { return img_size; }
     virtual bool is_valid() = 0;
     virtual ~workflow_builder_base(){};
+    virtual NN_WORKLOAD_DATA_TYPE* get_input_formats() = 0;
+    virtual NN_WORKLOAD_DATA_TYPE* get_output_formats() = 0;
 };
 
 

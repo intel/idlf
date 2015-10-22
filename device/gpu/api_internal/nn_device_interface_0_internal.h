@@ -222,7 +222,7 @@ struct nn_cl_data
 #if 0       // This has to be debugged
                 parent->cl_buffer.push_back(new cl::Buffer(
                     parent->device_context->get_context(),
-                    parent->buffer_mask, 
+                    parent->buffer_mask,
                     parent->buffer_aligned_size,
                     ptr,
                     &err));
@@ -239,8 +239,8 @@ struct nn_cl_data
     }
 
     nn_cl_data(
-        nn_cl_data& in_data, 
-        nn_workload_data_coords_t& coords_begin, 
+        nn_cl_data& in_data,
+        nn_workload_data_coords_t& coords_begin,
         nn_workload_data_coords_t& coords_end)
     {
         parent = in_data.parent;
@@ -249,6 +249,9 @@ struct nn_cl_data
 
         assert(coords_begin.dimension == coords_end.dimension);
         const uint32_t dimension_count = 6;
+
+        view_begin = in_data.view_begin;
+        view_end = in_data.view_end;
 
         for (uint32_t i = 0; i < dimension_count; ++i)
         {
@@ -473,16 +476,16 @@ typedef struct nn_gpu_workload_item {
         }
         if(this->type == NN_WORK_ITEM_TYPE_ARITHMETIC)
         {
-            delete this->arguments.forward_arithmetic.factor; 
+            delete this->arguments.forward_arithmetic.factor;
         }
         else if(this->type == NN_WORK_ITEM_TYPE_FULLY_CONNECTED)
         {
-            delete this->arguments.forward_fully_connected.weights; 
-            delete this->arguments.forward_fully_connected.biases; 
-        } 
+            delete this->arguments.forward_fully_connected.weights;
+            delete this->arguments.forward_fully_connected.biases;
+        }
         else if (this->type == NN_WORK_ITEM_TYPE_CONVOLUTION)
         {
-            delete this->arguments.forward_convolution.weights; 
+            delete this->arguments.forward_convolution.weights;
             delete this->arguments.forward_convolution.biases;
         }
     }

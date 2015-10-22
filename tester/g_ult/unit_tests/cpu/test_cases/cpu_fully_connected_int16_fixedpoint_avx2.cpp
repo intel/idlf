@@ -26,6 +26,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "tester/g_ult/unit_tests/cpu/naive_implementations.h"
+#include <gtest/gtest.h>
 
 const uint32_t C_simd_width = sizeof(__m256)/sizeof(int32_t);
 
@@ -67,13 +68,13 @@ static void ult_nn_fc_initialize_work_item(
     NN_ACTIVATION_FUNCTION activation)
 {
 
-    nn_workload_data_layout_t in_layout = nn::workload_data<int16_t>::layout.pnzxyq;
+    nn_workload_data_layout_t in_layout = nn::layout_t<nn::layout_pnzxyq_i16>::layout;
 
-    nn_workload_data_layout_t out_layout = std::is_same<T_output_type, int16_t>::value ? nn::workload_data<int16_t>::layout.pnzxyq : nn::workload_data<int32_t>::layout.pnzxyq;
+    nn_workload_data_layout_t out_layout = std::is_same<T_output_type, int16_t>::value ? nn::layout_t<nn::layout_pnzxyq_i16>::layout : nn::layout_t<nn::layout_pnzxyq_i32>::layout;
 
-    nn_workload_data_layout_t bias_layout = nn::workload_data<int32_t>::layout.xzynpq;
+    nn_workload_data_layout_t bias_layout = nn::layout_t<nn::layout_xzynpq_i32>::layout;
 
-    nn_workload_data_layout_t weight_layout = nn::workload_data<int16_t>::layout.xzynpq;
+    nn_workload_data_layout_t weight_layout = nn::layout_t<nn::layout_xzynpq_i16>::layout;
 
     nn_workload_data_coords_t input_coords = 
     { 
@@ -137,6 +138,7 @@ static void ult_nn_fc_initialize_work_item(
 
     input_item = new nn_workload_item();
     input_item->type = NN_WORK_ITEM_TYPE_INPUT;
+    input_item->primitive = nullptr;
 
     nn::workload_data<int16_t> *input_data = new nn::workload_data<int16_t>(input_coords, in_layout);
     memcpy(input_data->parent->data_buffer, input, input_data->parent->buffer_size);
@@ -159,22 +161,29 @@ static void ult_nn_fc_initialize_work_item(
         reinterpret_cast<nn_device_internal*>(device_interface_0.device));
 
     // Create primitive output
+    delete work_item->output[0];
     work_item->output[0] = static_cast<int16_fixedpoint::fully_connected_i16<T_output_type> *>(work_item->primitive)->create_outputs(false)[0];
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 template<typename T_output_type>
-static void ult_nn_fc_deinitialize_work_item(nn_workload_item* &work_item){
-    auto &arguments = work_item_helper<T_output_type>::get_arguments(work_item);
+static void ult_nn_fc_deinitialize_work_item(nn_workload_item* &work_item)
+{
+    if(work_item->type != NN_WORK_ITEM_TYPE_INPUT)
+    {
+        auto &arguments = work_item_helper<T_output_type>::get_arguments(work_item);
 
-    delete arguments.biases;
-    delete arguments.weights;
+        delete arguments.biases;
+        delete arguments.weights;
+    }
 
-    work_item->input.clear();
-    delete work_item->output[0];
+    for(auto& output : work_item->output)
+    {
+        delete output;
+        output = nullptr;
+    }
 
     delete work_item;
-
     work_item = nullptr;
 }
 
@@ -610,6 +619,7 @@ bool ult_fc_int16_fp_perform_test(
 
     // Cleanup.
     ult_nn_fc_deinitialize_work_item<T_output_type>(work_item);
+    ult_nn_fc_deinitialize_work_item<T_output_type>(input_item);
 
     if (check_out_views)
     {

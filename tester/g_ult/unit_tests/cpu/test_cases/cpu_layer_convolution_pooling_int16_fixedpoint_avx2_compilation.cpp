@@ -29,6 +29,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // merge to nn::data-releated changes was not done - both steps should be done in one step
 
 #include "tester/g_ult/unit_tests/cpu/naive_implementations.h"
+#include <gtest/gtest.h>
 
 const uint32_t C_simd_width = sizeof(__m256) / sizeof(int32_t);
 
@@ -157,6 +158,7 @@ static void ult_nn_convolution_fixedpoint_comp_both_initialize_matrices(
         }
     }
 
+    _mm_free(weightT);
     _mm_free(inputT);
 }
 
@@ -324,9 +326,9 @@ static void fill_workflow(
     NN_ACTIVATION_FUNCTION activation
     )
 {
-    nn_workload_data_layout_t bias_layout = nn::workload_data<int32_t>::layout.xnyzpq;
+    nn_workload_data_layout_t bias_layout = nn::layout_t<nn::layout_xnyzpq_i32>::layout;
 
-    nn_workload_data_layout_t weight_layout = nn::workload_data<int16_t>::layout.nxyzpq;
+    nn_workload_data_layout_t weight_layout = nn::layout_t<nn::layout_nxyzpq_i16>::layout;
 
     nn::data<int32_t, 1> *bias_data = new nn::data<int32_t, 1>((int32_t *)bias, num_output_feature_maps);
     nn::data<int16_t, 4> *weight_data = new nn::data<int16_t, 4>((int16_t *)weights, kernel_width, kernel_height, num_input_feature_maps, num_output_feature_maps);

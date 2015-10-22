@@ -73,53 +73,61 @@ class fully_connected_f32 : public nn_primitive_t {
                             const std::vector<nn_workload_data_t *> &parameters,
                             const std::vector<const nn_workload_data_t *> &outputs) override;
 
-    virtual void dispatch_backward_weights_delta(const nn::workload_data<float> *forward_input_view,
-                                                 const nn::workload_data<float> *backward_input_view,
-                                                 nn::workload_data<float> *backward_weights_delta_view);
+    virtual void dispatch_backward_weights_delta(const nn::workload_data<> *forward_input_view,
+                                                 const nn::workload_data<> *backward_input_view,
+                                                 nn::workload_data<> *backward_weights_delta_view);
 
-    virtual void dispatch_backward_bias_delta(const nn::workload_data<float> *backward_input_view,
-                                              const nn::workload_data<float> *bias_multiplier,
-                                              nn::workload_data<float> *backward_bias_delta_view);
+    virtual void dispatch_backward_bias_delta(const nn::workload_data<> *backward_input_view,
+                                              const nn::workload_data<> *bias_multiplier,
+                                              nn::workload_data<> *backward_bias_delta_view);
 
-    virtual void dispatch_backward_input_delta(const nn::workload_data<float> *backward_input_view,
-                                               const nn::workload_data<float> *forward_weights_view,
-                                               nn::workload_data<float> *backward_output_view);
+    virtual void dispatch_backward_input_delta(const nn::workload_data<> *backward_input_view,
+                                               const nn::workload_data<> *forward_weights_view,
+                                               nn::workload_data<> *backward_output_view);
+
+    bool get_has_3d_input() {return has_3d_input;}
+
+    uint32_t get_input_size_x() {return input_size_x;}
+    uint32_t get_input_size_y() {return input_size_y;}
+    uint32_t get_input_size_z() {return input_size_z;}
+    uint32_t get_input_size() {return num_input;}
+    uint32_t get_output_size() {return num_output;}
 
   private:
-    virtual void forward(const nn::workload_data<float> *input,
-                         const nn::workload_data<float> *weights,
-                         const nn::workload_data<float> *bias,
-                         nn::workload_data<float> *output);
+    virtual void forward(const nn::workload_data<> *input,
+                         const nn::workload_data<> *weights,
+                         const nn::workload_data<> *bias,
+                         nn::workload_data<> *output);
 
     template <NN_ACTIVATION_FUNCTION T_FUNCTION, bool T_NEED_BIAS_COPY>
-    void run_fully_connected_work_item_internal_batch8(const nn::workload_data<float> *input,
-                                                       const nn::workload_data<float> *weights,
-                                                       const nn::workload_data<float> *bias,
-                                                       nn::workload_data<float> *output);
+    void run_fully_connected_work_item_internal_batch8(const nn::workload_data<> *input,
+                                                       const nn::workload_data<> *weights,
+                                                       const nn::workload_data<> *bias,
+                                                       nn::workload_data<> *output);
     template <NN_ACTIVATION_FUNCTION T_FUNCTION, bool T_NEED_BIAS_COPY>
-    void run_fully_connected_work_item_internal_batch48(const nn::workload_data<float> *input,
-                                                        const nn::workload_data<float> *weights,
-                                                        const nn::workload_data<float> *bias,
-                                                        nn::workload_data<float> *output);
+    void run_fully_connected_work_item_internal_batch48(const nn::workload_data<> *input,
+                                                        const nn::workload_data<> *weights,
+                                                        const nn::workload_data<> *bias,
+                                                        nn::workload_data<> *output);
     template <NN_ACTIVATION_FUNCTION T_FUNCTION, bool T_NEED_BIAS_COPY>
-    void run_fully_connected_work_item_internal_latency(const nn::workload_data<float> *input,
-                                                        const nn::workload_data<float> *weights,
-                                                        const nn::workload_data<float> *bias,
-                                                        nn::workload_data<float> *output);
+    void run_fully_connected_work_item_internal_latency(const nn::workload_data<> *input,
+                                                        const nn::workload_data<> *weights,
+                                                        const nn::workload_data<> *bias,
+                                                        nn::workload_data<> *output);
     template <NN_ACTIVATION_FUNCTION T_FUNCTION, bool T_NEED_BIAS_COPY>
-    void choose_fully_connected_work_item_batching_mode(const nn::workload_data<float> *input,
-                                                        const nn::workload_data<float> *weights,
-                                                        const nn::workload_data<float> *bias,
-                                                        nn::workload_data<float> *output);
+    void choose_fully_connected_work_item_batching_mode(const nn::workload_data<> *input,
+                                                        const nn::workload_data<> *weights,
+                                                        const nn::workload_data<> *bias,
+                                                        nn::workload_data<> *output);
     template <bool T_NEED_BIAS_COPY>
-    void choose_fully_connected_work_item_activation(const nn::workload_data<float> *input,
-                                                     const nn::workload_data<float> *weights,
-                                                     const nn::workload_data<float> *bias,
-                                                     nn::workload_data<float> *output);
-    void run_fully_connected_work_item(const nn::workload_data<float> *input,
-                                       const nn::workload_data<float> *weights,
-                                       const nn::workload_data<float> *bias,
-                                       nn::workload_data<float> *output);
+    void choose_fully_connected_work_item_activation(const nn::workload_data<> *input,
+                                                     const nn::workload_data<> *weights,
+                                                     const nn::workload_data<> *bias,
+                                                     nn::workload_data<> *output);
+    void run_fully_connected_work_item(const nn::workload_data<> *input,
+                                       const nn::workload_data<> *weights,
+                                       const nn::workload_data<> *bias,
+                                       nn::workload_data<> *output);
 
     friend void unpack_fully_connected_callback_handle(void *void_handle);
     friend void unpack_fully_connected_callback_handle_backward_bias(void *void_handle);
@@ -128,6 +136,7 @@ class fully_connected_f32 : public nn_primitive_t {
 
   protected:
     size_t input_size_x, input_size_y, input_size_z; /* TODO: temporary solution for create_input_delta */
+    bool has_3d_input;
     const size_t num_input, num_output, batch_size;
     const nn_argument_activation_t activation;
     nn_device_internal *device;

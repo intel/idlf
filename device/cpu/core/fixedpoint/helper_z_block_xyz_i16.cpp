@@ -30,7 +30,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace int16_fixedpoint {
 namespace helper_z_block_xyz_i16 {
-    const nn_workload_data_layout_t &primitive_z_block_xyz_i16_base::in_out_layout = nn::workload_data<int16_t>::layout.pxyznq;
+    const nn_workload_data_layout_t &primitive_z_block_xyz_i16_base::in_out_layout = nn::layout_t<nn::layout_pxyznq_i16>::layout;
 
     nn::workload_data<int16_t> * primitive_z_block_xyz_i16_base::create_input_impl(const nn::data<int16_t, 4> &input,
         size_t padding_left,

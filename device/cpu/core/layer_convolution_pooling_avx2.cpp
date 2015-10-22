@@ -38,7 +38,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <tuple>
 
 // NN_CODE_UNREACHABLE signal to supporting compiler that specific location in code cannot be reached
-#if defined _MSC_VER 
+#if defined _MSC_VER
 #   define NN_UNREACHABLE_CODE __assume(0)
 #endif
 
@@ -59,7 +59,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 
 // Pragmas inside macros.
-#if defined _MSC_VER 
+#if defined _MSC_VER
 #   define PRAGMA_MACRO(x) __pragma(x)
 #else
 #   define PRAGMA_MACRO(x) _Pragma(#x)
@@ -275,10 +275,10 @@ template<bool                  T_exact_match,
         uint32_t               T_output_width               = 0,
         uint32_t               T_output_height              = 0,
         uint32_t               T_output_feature_maps        = 0>
-void convolve_maxpool_internal(const nn::workload_data<float> *input_view,
-                               const nn::workload_data<float> *weights_view,
-                               const nn::workload_data<float> *bias_view,
-                               nn::workload_data<float> *output_view,
+void convolve_maxpool_internal(const nn::workload_data<> *input_view,
+                               const nn::workload_data<> *weights_view,
+                               const nn::workload_data<> *bias_view,
+                               nn::workload_data<> *output_view,
                                size_t _kernel_stride_x,
                                size_t _kernel_stride_y,
                                int32_t kernel_center_x,
@@ -305,40 +305,40 @@ void convolve_maxpool_internal(const nn::workload_data<float> *input_view,
 
     const auto output_fm_view_start = output_view->view_begin.t[NN_DATA_COORD_z];
     const auto output_fm_view_end = output_view->view_end.t[NN_DATA_COORD_z];
-    
+
     const auto output_row_view_start = output_view->view_begin.t[NN_DATA_COORD_y];
     const auto output_row_view_end = output_view->view_end.t[NN_DATA_COORD_y];
-    
+
     const auto output_column_view_start = output_view->view_begin.t[NN_DATA_COORD_x];
     const auto output_column_view_end = output_view->view_end.t[NN_DATA_COORD_x];
-    
+
     const auto input_column_view_start = input_view->view_begin.t[NN_DATA_COORD_x] - kernel_center_x;
     const auto input_row_view_start = input_view->view_begin.t[NN_DATA_COORD_y] - kernel_center_y;
-    
+
     const auto output_view_width = output_column_view_end - output_column_view_start + 1;
-    
+
     const auto output_row_size      = output_feature_map_width * num_output_feature_maps;
     const auto input_row_size       = input_feature_map_width * num_input_feature_maps;
     const auto weight_offset        = weights_view->parent->lengths.t[NN_DATA_COORD_z] * kernel_width*kernel_height * C_slice_size;
-    
+
     const auto num_blocks_full      = output_view_width / 3;
     const auto partial_block_size   = output_view_width % 3;
-    
+
     const auto output_image_view_start = output_view->view_begin.t[NN_DATA_COORD_n];
     const auto output_image_view_end = output_view->view_end.t[NN_DATA_COORD_n];
-    
+
     const auto input_image_size = input_row_size * input_feature_map_height;
     const auto output_image_size = output_row_size * output_feature_map_height;
 
     const auto kernel_out_fmap_view_start = weights_view->view_begin.t[NN_DATA_COORD_q] * C_slice_size;
-    
+
     for(auto out_image = output_image_view_start; out_image <= output_image_view_end; ++out_image)
     {
         auto input_image_offset = out_image*input_image_size;
         auto output_image_offset = out_image*output_image_size;
-        
-        for (auto out_feature_map = output_fm_view_start, kernel_feature_map = kernel_out_fmap_view_start, bias_feature_map = bias_view_start; 
-            out_feature_map <= output_fm_view_end; 
+
+        for (auto out_feature_map = output_fm_view_start, kernel_feature_map = kernel_out_fmap_view_start, bias_feature_map = bias_view_start;
+            out_feature_map <= output_fm_view_end;
             out_feature_map += C_slice_size, kernel_feature_map += C_slice_size, bias_feature_map += C_slice_size)
         {
             for (auto output_row = output_row_view_start, input_row = 0U; output_row <= output_row_view_end; output_row++, input_row+=2)
@@ -348,18 +348,18 @@ void convolve_maxpool_internal(const nn::workload_data<float> *input_view,
                 const auto out_offset1  = output_row * output_row_size;
                 const auto inp_offset1  = inp_h * input_row_size;
                 const auto inp_offset2  = inp_h2 * input_row_size;
-                
+
                 auto out_offset         = out_offset1 + output_column_view_start * num_output_feature_maps + output_image_offset;
                 auto inp_offset_base    = inp_offset1 + input_column_view_start * num_input_feature_maps + input_image_offset;
                 auto inp_offset_base2   = inp_offset2 + input_column_view_start * num_input_feature_maps + input_image_offset;
-                
+
                 for (auto block = 0U; block < num_blocks_full; block++) {
                 NN_CONVOLVE_MAXPOOL2x2_OPTIMIZED_BLOCK(6);
                     inp_offset_base += 6 * num_input_feature_maps * kernel_stride_x;
                     inp_offset_base2 += 6 * num_input_feature_maps * kernel_stride_x;
                     out_offset += 3 * num_output_feature_maps;
                 }
-                
+
                 switch (partial_block_size)
                 {
                 case 0: break;
@@ -376,34 +376,34 @@ void convolve_maxpool_internal(const nn::workload_data<float> *input_view,
     }
 }
 
-namespace 
+namespace
 {
 
 using optimized_layer_map_t = std::map<
-    std::tuple<NN_ACTIVATION_FUNCTION, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t>, 
+    std::tuple<NN_ACTIVATION_FUNCTION, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t>,
     decltype(convolve_maxpool_internal<false, NN_ACTIVATION_FUNCTION_NONE>)*>;
 
 template<NN_ACTIVATION_FUNCTION T_activation,
-         uint32_t T_input_width, uint32_t T_input_height, uint32_t T_input_feature_maps, 
+         uint32_t T_input_width, uint32_t T_input_height, uint32_t T_input_feature_maps,
          uint32_t T_input_fmap_view_start, uint32_t T_input_fmap_view_length, uint32_t T_kernel_in_fmap_view_start,
          uint32_t T_kernel_width, uint32_t T_kernel_height, uint32_t T_kernel_stride_x, uint32_t T_kernel_stride_y,
          uint32_t T_output_width, uint32_t T_output_height, uint32_t T_output_feature_maps>
 optimized_layer_map_t::value_type prepare_entry()
 {
-    return { 
-        optimized_layer_map_t::key_type{ 
+    return {
+        optimized_layer_map_t::key_type{
             T_activation,
             T_input_width, T_input_height, T_input_feature_maps,
             T_input_fmap_view_start, T_input_fmap_view_length, T_kernel_in_fmap_view_start,
             T_kernel_width, T_kernel_height, T_kernel_stride_x, T_kernel_stride_y,
-            T_output_width, T_output_height, T_output_feature_maps }, 
+            T_output_width, T_output_height, T_output_feature_maps },
         convolve_maxpool_internal<
-            true, 
-            T_activation, 
+            true,
+            T_activation,
             (T_input_fmap_view_length % 8 == 0) ? 8 : T_input_fmap_view_length,
-            T_input_width, T_input_height, T_input_feature_maps, 
+            T_input_width, T_input_height, T_input_feature_maps,
             T_input_fmap_view_start, T_input_fmap_view_length, T_kernel_in_fmap_view_start,
-            T_kernel_width, T_kernel_height, T_kernel_stride_x, T_kernel_stride_y, 
+            T_kernel_width, T_kernel_height, T_kernel_stride_x, T_kernel_stride_y,
             T_output_width, T_output_height, T_output_feature_maps> };
 }
 
@@ -468,10 +468,10 @@ size_t convolution_pooling_f32_2x2stride2::get_required_input_h() {
 }
 
 template <NN_ACTIVATION_FUNCTION T_activation>
-void convolution_pooling_f32_2x2stride2::run_convolution_maxpool(const nn::workload_data<float> *input_view,
-                                                                 const nn::workload_data<float> *weights_view,
-                                                                 const nn::workload_data<float> *bias_view,
-                                                                 nn::workload_data<float> *output_view) {
+void convolution_pooling_f32_2x2stride2::run_convolution_maxpool(const nn::workload_data<> *input_view,
+                                                                 const nn::workload_data<> *weights_view,
+                                                                 const nn::workload_data<> *bias_view,
+                                                                 nn::workload_data<> *output_view) {
     const auto num_output_feature_maps = output_view->parent->lengths.t[NN_DATA_COORD_z];
     const auto num_input_feature_maps = input_view->parent->lengths.t[NN_DATA_COORD_z];
     const auto output_feature_map_width = output_view->parent->lengths.t[NN_DATA_COORD_x];
@@ -530,10 +530,10 @@ void convolution_pooling_f32_2x2stride2::run_convolution_maxpool(const nn::workl
 }
 
 void convolution_pooling_f32_2x2stride2::choose_convolution_maxpool_padding_mode_and_activation(
-    const nn::workload_data<float> *input_view,
-    const nn::workload_data<float> *weights_view,
-    const nn::workload_data<float> *bias_view,
-    nn::workload_data<float> *output_view) {
+    const nn::workload_data<> *input_view,
+    const nn::workload_data<> *weights_view,
+    const nn::workload_data<> *bias_view,
+    nn::workload_data<> *output_view) {
 
     switch (padding)
     {
@@ -543,8 +543,8 @@ void convolution_pooling_f32_2x2stride2::choose_convolution_maxpool_padding_mode
         const int32_t pool_stride_x = 2;
         const int32_t pool_stride_y = 2;
 
-        const int32_t filter_stride_x = this->stride_x;
-        const int32_t filter_stride_y = this->stride_y;
+        const int32_t filter_stride_x = static_cast<int32_t>(this->stride_x);
+        const int32_t filter_stride_y = static_cast<int32_t>(this->stride_y);
 
         const int32_t stride_x = filter_stride_x * pool_stride_x;
         const int32_t stride_y = filter_stride_y * pool_stride_y;
@@ -653,16 +653,16 @@ void convolution_pooling_f32_2x2stride2::choose_convolution_maxpool_padding_mode
         };
 
         bool valid_optimized_view = false;
-        nn::workload_data<float>* input_subview = nullptr;
-        nn::workload_data<float>* output_subview = nullptr;
+        nn::workload_data<>* input_subview = nullptr;
+        nn::workload_data<>* output_subview = nullptr;
 
         // Run optimized convolution on subview if there is anything to process after crop.
         if (static_cast<int32_t>(output_view_start.t[NN_DATA_COORD_x]) <= static_cast<int32_t>(output_view_end.t[NN_DATA_COORD_x]) &&
             static_cast<int32_t>(output_view_start.t[NN_DATA_COORD_y]) <= static_cast<int32_t>(output_view_end.t[NN_DATA_COORD_y]))
         {
             valid_optimized_view = true;
-            input_subview = new nn::workload_data<float>(*input_view, input_view_start, input_view_end);
-            output_subview = new nn::workload_data<float>(*output_view, output_view_start, output_view_end);
+            input_subview = new nn::workload_data<>(*input_view, input_view_start, input_view_end);
+            output_subview = new nn::workload_data<>(*output_view, output_view_start, output_view_end);
 
             switch (this->activation.function)
             {
@@ -701,8 +701,8 @@ void convolution_pooling_f32_2x2stride2::choose_convolution_maxpool_padding_mode
                     {
                         const auto input_image_offset = num_ifm * ifm_width * ifm_height * out_image;
                         const auto output_image_offset = num_ofm * ofm_width * ofm_height * out_image;
-                        for (auto out_feature_map = output_fm_view_start, kernel_feature_map = kernel_out_fmap_view_start, bias_feature_map = bias_view_start; 
-                            out_feature_map <= output_fm_view_end; 
+                        for (auto out_feature_map = output_fm_view_start, kernel_feature_map = kernel_out_fmap_view_start, bias_feature_map = bias_view_start;
+                            out_feature_map <= output_fm_view_end;
                             out_feature_map += C_slice_size, kernel_feature_map += C_slice_size, bias_feature_map += C_slice_size)
                         {
 
@@ -820,10 +820,10 @@ void convolution_pooling_f32_2x2stride2::choose_convolution_maxpool_padding_mode
 
 struct convolution_pooling_f32_2x2stride2_request_handle {
     convolution_pooling_f32_2x2stride2 *primitive;
-    const nn::workload_data<float> *input;
-    const nn::workload_data<float> *weights;
-    const nn::workload_data<float> *bias;
-    nn::workload_data<float> *output;
+    const nn::workload_data<> *input;
+    const nn::workload_data<> *weights;
+    const nn::workload_data<> *bias;
+    nn::workload_data<> *output;
 };
 
 void unpack_convolve_maxpooling2x2_stride2x2_callback_handle(
@@ -834,10 +834,10 @@ void unpack_convolve_maxpooling2x2_stride2x2_callback_handle(
         handle->input, handle->weights, handle->bias, handle->output);
 }
 
-void convolution_pooling_f32_2x2stride2::forward(const nn::workload_data<float> *input,
-                                                 const nn::workload_data<float> *weights,
-                                                 const nn::workload_data<float> *bias,
-                                                 nn::workload_data<float> *output) {
+void convolution_pooling_f32_2x2stride2::forward(const nn::workload_data<> *input,
+                                                 const nn::workload_data<> *weights,
+                                                 const nn::workload_data<> *bias,
+                                                 nn::workload_data<> *output) {
     const auto num_output_fm_items =
         (output->view_end.t[NN_DATA_COORD_z] - output->view_begin.t[NN_DATA_COORD_z] + 1) / C_slice_size;
     const auto num_batch_items =
@@ -853,10 +853,10 @@ void convolution_pooling_f32_2x2stride2::forward(const nn::workload_data<float> 
     else
     {
         // Full cores utilization version.
-        std::vector<const nn::workload_data<float> *> input_views(total_workers);
-        std::vector<const nn::workload_data<float> *> weights_views(total_workers);
-        std::vector<const nn::workload_data<float> *> bias_views(total_workers);
-        std::vector<nn::workload_data<float> *> output_views(total_workers);
+        std::vector<const nn::workload_data<> *> input_views(total_workers);
+        std::vector<const nn::workload_data<> *> weights_views(total_workers);
+        std::vector<const nn::workload_data<> *> bias_views(total_workers);
+        std::vector<nn::workload_data<> *> output_views(total_workers);
 
         // Fill slave work items.
         for (auto output_fm_item = 0u; output_fm_item < num_output_fm_items; ++output_fm_item)
@@ -922,14 +922,14 @@ void convolution_pooling_f32_2x2stride2::forward(const nn::workload_data<float> 
                     output_fm_item
                 };
 
-                input_views[item_in_pool] = 
-                    new nn::workload_data<float>(*input, input_view_begin, input_view_end);
+                input_views[item_in_pool] =
+                    new nn::workload_data<>(*input, input_view_begin, input_view_end);
 
                 output_views[item_in_pool] =
-                    new nn::workload_data<float>(*output, output_view_begin, output_view_end);
+                    new nn::workload_data<>(*output, output_view_begin, output_view_end);
 
                 weights_views[item_in_pool] =
-                    new nn::workload_data<float>(*weights, weights_view_begin, weights_view_end);
+                    new nn::workload_data<>(*weights, weights_view_begin, weights_view_end);
 
                 // Use biases.
                 if (bias != nullptr)
@@ -953,8 +953,8 @@ void convolution_pooling_f32_2x2stride2::forward(const nn::workload_data<float> 
                         bias->get_length(NN_DATA_COORD_q) - 1
                     };
 
-                    bias_views[item_in_pool] = 
-                        new nn::workload_data<float>(*bias, bias_view_begin, bias_view_end);
+                    bias_views[item_in_pool] =
+                        new nn::workload_data<>(*bias, bias_view_begin, bias_view_end);
                 } else {
                     bias_views[item_in_pool] = nullptr;
                 }

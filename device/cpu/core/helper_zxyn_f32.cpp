@@ -32,24 +32,33 @@ namespace layer {
 namespace helper_zxyn_f32 {
 
 std::vector<nn_workload_data_t *> primitive_zxyn_f32_base::create_inputs(bool allocate_delta) {
-    return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, float>::create(
-        device, get_required_input_w(), get_required_input_h(), input_size_z, batch_size, 0, 0, 0, 0, allocate_delta) };
-}
-
-std::vector<nn_workload_data_t *> primitive_zxyn_f32_base::create_outputs(bool allocate_delta) {
-    return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, float>::create(device,
-        output_size_x,
-        output_size_y,
-        output_size_z,
-        batch_size,
-        output_padding_left,
-        output_padding_right,
-        output_padding_top,
-        output_padding_bottom,
+    return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::create(
+        device,
+        static_cast<uint32_t>(get_required_input_w()),
+        static_cast<uint32_t>(get_required_input_h()),
+        static_cast<uint32_t>(input_size_z),
+        static_cast<uint32_t>(batch_size),
+        0,
+        0,
+        0,
+        0,
         allocate_delta) };
 }
 
-nn::workload_data<float> *primitive_zxyn_f32_base::map_input(const nn::data<float, 4> &input) {
+std::vector<nn_workload_data_t *> primitive_zxyn_f32_base::create_outputs(bool allocate_delta) {
+    return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::create(device,
+        static_cast<uint32_t>(output_size_x),
+        static_cast<uint32_t>(output_size_y),
+        static_cast<uint32_t>(output_size_z),
+        static_cast<uint32_t>(batch_size),
+        static_cast<uint32_t>(output_padding_left),
+        static_cast<uint32_t>(output_padding_right),
+        static_cast<uint32_t>(output_padding_top),
+        static_cast<uint32_t>(output_padding_bottom),
+        allocate_delta) };
+}
+
+nn::workload_data<> *primitive_zxyn_f32_base::map_input(const nn::data<float, 4> &input) {
      if (input.size[3] != batch_size)
         throw std::invalid_argument("input batch size doesn't match");
 
@@ -69,8 +78,8 @@ nn::workload_data<float> *primitive_zxyn_f32_base::map_input(const nn::data<floa
                                       1,
                                       1};
 
-    auto buffer = new nn::workload_data<float>(
-        NN_WORKLOAD_DATA_TAG_ZXYN, input.buffer, size, nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, float>::layout);
+    auto buffer = new nn::workload_data<>(
+        NN_WORKLOAD_DATA_TAG_ZXYN, input.buffer, size, nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::layout);
 
     return buffer;
 }

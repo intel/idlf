@@ -39,10 +39,10 @@ namespace device_gpu
 
 
 //build options :-Darithmetic_function(x,y)=(x) -DNUM_BATCHES;
-//get_global_id(0) is single float to be modulated within a given batch. 
+//get_global_id(0) is single float to be modulated within a given batch.
 //
 
-static std::string kernelSource = R"( 
+static std::string kernelSource = R"(
 __kernel void arithmetic(__global float* output,  __global const float* input, __global const float* factor)
 {
     // Calculate offset of data (input and corressponding output) to be processed (first batch)
@@ -58,9 +58,9 @@ __kernel void arithmetic(__global float* output,  __global const float* input, _
 
     //.. factor data is the same for all batches
 #ifdef CONVERSION_ZXY_TO_3D
-    float factor_value = factor[output_offset]; // factor data is given as X,Y,Z 
+    float factor_value = factor[output_offset]; // factor data is given as X,Y,Z
 #else
-    float factor_value = factor[input_output_offset]; // factor data is given as X,Y,Z 
+    float factor_value = factor[input_output_offset]; // factor data is given as X,Y,Z
 #endif
     for(unsigned int i = 0 ; i < NUM_BATCHES; ++i) {  // test short vs int
 #ifdef CONVERSION_ZXY_TO_3D
@@ -79,24 +79,24 @@ __kernel void arithmetic(__global float* output,  __global const float* input, _
 bool operator < ( const arithmetic_kernel_key &A, const arithmetic_kernel_key &B )
 {
 
-    if( A.m_conv_to_perform < B.m_conv_to_perform ) 
+    if( A.m_conv_to_perform < B.m_conv_to_perform )
     {
         return true;
     }
 
-    if( ( A.m_conv_to_perform == B.m_conv_to_perform ) && (A.m_arithmetic_function < B.m_arithmetic_function) ) 
+    if( ( A.m_conv_to_perform == B.m_conv_to_perform ) && (A.m_arithmetic_function < B.m_arithmetic_function) )
     {
         return true;
     }
 
-    if( ( A.m_conv_to_perform == B.m_conv_to_perform ) && (A.m_arithmetic_function < B.m_arithmetic_function) ) 
+    if( ( A.m_conv_to_perform == B.m_conv_to_perform ) && (A.m_arithmetic_function < B.m_arithmetic_function) )
     {
         return true;
     }
 
     if( ( A.m_conv_to_perform == B.m_conv_to_perform ) &&
         (A.m_arithmetic_function == B.m_arithmetic_function) &&
-        (A.m_total_input_width < B.m_total_input_width) ) 
+        (A.m_total_input_width < B.m_total_input_width) )
     {
         return true;
     }
@@ -104,7 +104,7 @@ bool operator < ( const arithmetic_kernel_key &A, const arithmetic_kernel_key &B
     if( (A.m_conv_to_perform == B.m_conv_to_perform ) &&
         (A.m_arithmetic_function == B.m_arithmetic_function) &&
         (A.m_total_input_width == B.m_total_input_width) &&
-        (A.m_total_input_height < B.m_total_input_height) ) 
+        (A.m_total_input_height < B.m_total_input_height) )
     {
         return true;
     }
@@ -113,7 +113,7 @@ bool operator < ( const arithmetic_kernel_key &A, const arithmetic_kernel_key &B
         (A.m_arithmetic_function == B.m_arithmetic_function) &&
         (A.m_total_input_width == B.m_total_input_width) &&
         (A.m_total_input_height == B.m_total_input_height) &&
-        (A.m_total_input_depth < B.m_total_input_depth) ) 
+        (A.m_total_input_depth < B.m_total_input_depth) )
     {
         return true;
     }
@@ -123,7 +123,7 @@ bool operator < ( const arithmetic_kernel_key &A, const arithmetic_kernel_key &B
         (A.m_total_input_width == B.m_total_input_width) &&
         (A.m_total_input_height == B.m_total_input_height) &&
         (A.m_total_input_depth == B.m_total_input_depth) &&
-        (A.m_num_batches < B.m_num_batches) ) 
+        (A.m_num_batches < B.m_num_batches) )
     {
         return true;
     }

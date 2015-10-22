@@ -47,14 +47,14 @@ struct image_recognition_item_t {
 struct images_recognition_batch_t {
     uint64_t                               time_of_recognizing;
     uint64_t                               clocks_of_recognizing;
-    std::vector<image_recognition_item_t>  recognized_images;    // 
+    std::vector<image_recognition_item_t>  recognized_images;    //
 
 };
 class C_report_maker
 {
 private:
-    uint16_t batch_size;
-    uint16_t execute_loops;
+    uint32_t batch_size;
+    uint32_t execute_loops;
     std::string model;
     std::string device_name;
     std::string appname;
@@ -65,7 +65,7 @@ public:
     C_report_maker(std::string _appname,
                    std::string _device_name,
                    std::string _model,
-                      uint16_t _batch_size);
+                      uint32_t _batch_size);
     ~C_report_maker();
 
 public:

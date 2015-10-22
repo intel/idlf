@@ -25,14 +25,11 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef naive_implementations
-#define naive_implementations
+#pragma once
 
 #include <immintrin.h>
 #include <cmath>
 #include <algorithm>
-
-#include "gtest/gtest.h"
 
 #include "../../../../device/api/nn_device_interface_0.h"
 #include "../../../../device/cpu/core/layer_softmax_avx2.h"
@@ -185,7 +182,7 @@ void ult_nn_lrn_fp_comp_naive(
     );
 
 //cpu_layer_pooling_avx2.cpp
-void run_reference(nn::workload_data<float> *input,
+void run_reference(nn::workload_data<> *input,
     nn::data<float, 4> &output,
     size_t pool_size_x,
     size_t pool_size_y,
@@ -377,4 +374,117 @@ void cpu_layer_fullyconnected(
     nn_workload_item* &work_item,
     NN_ACTIVATION_FUNCTION activation_function);
 
-#endif //naive_implementations
+//testing forward avx2/assembly forward implementation
+
+void ult_nn_naive_convolve_set_input_value(
+    float* input_ref,
+    uint_least32_t width,
+    uint_least32_t height,
+    uint_least32_t feats,
+    uint_least32_t batch,
+    uint_least32_t column,
+    uint_least32_t row,
+    uint_least32_t feat,
+    float value);
+
+void ult_nn_naive_convolve_set_kernel_value(
+    float* kernel_ref,
+    uint_least32_t width,
+    uint_least32_t height,
+    uint_least32_t in_feats,
+    uint_least32_t column,
+    uint_least32_t row,
+    uint_least32_t in_feat,
+    uint_least32_t out_feat,
+    float value);
+
+float ult_nn_naive_convolve_get_output_value(
+    float* output_ref,
+    uint_least32_t width,
+    uint_least32_t height,
+    uint_least32_t feats,
+    uint_least32_t batch,
+    uint_least32_t column,
+    uint_least32_t row,
+    uint_least32_t feat);
+
+void ult_nn_naive_convolve(
+    float* in_ref,
+    float* out_ref,
+    float* kernel_ref,
+    float* bias_ref,
+    uint64_t num_output_features,
+    uint64_t num_input_features,
+    uint64_t out_width,
+    uint64_t out_height,
+    uint64_t in_width,
+    uint64_t in_height,
+    uint64_t kernel_width,
+    uint64_t kernel_height,
+    uint64_t kernel_stride_x,
+    uint64_t kernel_stride_y,
+    uint64_t kernel_col_shift,
+    uint64_t kernel_row_shift);
+
+void ult_nn_naive_convolve_all_pics(
+    float* in_ref,
+    float* out_ref,
+    float* kernel_ref,
+    float* bias_ref,
+    uint64_t batch_size,
+    uint64_t num_output_features,
+    uint64_t num_input_features,
+    uint64_t out_width,
+    uint64_t out_height,
+    uint64_t in_width,
+    uint64_t in_height,
+    uint64_t kernel_width,
+    uint64_t kernel_height,
+    uint64_t kernel_stride_x,
+    uint64_t kernel_stride_y,
+    uint64_t kernel_col_shift,
+    uint64_t kernel_row_shift);
+
+void ult_nn_naive_convolve_simplified(
+    float* input_ref,
+    float* output_ref,
+    float* kernel_ref,
+    uint64_t num_output_feature_maps,
+    uint64_t num_input_feature_maps,
+    uint64_t input_feature_map_width,
+    uint64_t input_feature_map_height,
+    uint64_t kernel_width,
+    uint64_t kernel_height,
+    uint64_t kernel_stride_x = 1,
+    uint64_t kernel_stride_y = 1);
+
+void ult_nn_simplest_convolve_no_depth_no_stride(
+    float* in_ref,
+    float* out_ref,
+    float* kernel_ref,
+    uint64_t width,
+    uint64_t height,
+    uint64_t kernel_width,
+    uint64_t kernel_height);
+
+void ult_nn_simplest_convolve_no_depth(
+    float* in_ref,
+    float* out_ref,
+    float* kernel_ref,
+    uint64_t width,
+    uint64_t height,
+    uint64_t kernel_width,
+    uint64_t kernel_height,
+    uint64_t kernel_stride_x,
+    uint64_t kernel_stride_y);
+
+void ult_nn_simplest_convolve_no_stride_depth_of_input(
+    float* in_ref,
+    float* out_ref,
+    float* kernel_ref,
+    uint64_t num_input_feature_maps,
+    uint64_t width,
+    uint64_t height,
+    uint64_t kernel_width,
+    uint64_t kernel_height);
+

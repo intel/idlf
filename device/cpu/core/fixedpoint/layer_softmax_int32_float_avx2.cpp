@@ -35,7 +35,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <algorithm>
 
 // NN_CODE_UNREACHABLE signal to supporting compiler that specific location in code cannot be reached
-#if defined _MSC_VER 
+#if defined _MSC_VER
 #   define NN_UNREACHABLE_CODE __assume(0)
 #endif
 
@@ -102,7 +102,7 @@ namespace int16_fixedpoint {
         // arguments matching will remove all conditions in this code.
         __m256  acc0, acc1, acc2, acc3, acc4,
             acc5, acc6, acc7, acc8, acc9,
-            acc10, acc11, acc12, acc13, acc14, acc15;
+            acc10, acc11, acc12, acc13, acc14;
 
         // Load outputs and perform multiplication.
         if (T_SIZE >= 1)  acc0 = _mm256_mul_ps(_mm256_loadu_ps(output_ptr + 0 * C_batch_size), acc_sum);
@@ -153,7 +153,7 @@ namespace int16_fixedpoint {
         // arguments matching will remove all conditions in this code.
         __m256  acc0, acc1, acc2, acc3, acc4,
             acc5, acc6, acc7, acc8, acc9,
-            acc10, acc11, acc12, acc13, acc14, acc15;
+            acc10, acc11, acc12, acc13, acc14;
 
         // Load inputs and perform e^x
         if (T_SIZE >= 1)  acc0 = _inner_mm256_exp_ps1(_mm256_loadu_ps(input_ptr + 0 * C_batch_size));
@@ -225,7 +225,7 @@ namespace int16_fixedpoint {
         throw std::logic_error("The method or operation is not implemented.");
     }
 
-    void softmax_i32::run_softmax_int32_float_work_item_batch8(const nn::workload_data<int32_t> *input_view, nn::workload_data<float> *output_view)
+    void softmax_i32::run_softmax_int32_float_work_item_batch8(const nn::workload_data<int32_t> *input_view, nn::workload_data<> *output_view)
     {
         const auto input_width = input_view->parent->lengths.t[NN_DATA_COORD_z] * input_view->parent->lengths.t[NN_DATA_COORD_p];
         const auto output_width = output_view->view_end.t[NN_DATA_COORD_x] - output_view->view_begin.t[NN_DATA_COORD_x] + 1;
@@ -331,7 +331,7 @@ namespace int16_fixedpoint {
     }
 
 
-    void softmax_i32::run_softmax_int32_float_work_item_batch8x(const nn::workload_data<int32_t> *input_view, nn::workload_data<float> *output_view, uint16_t NoBatch8)
+    void softmax_i32::run_softmax_int32_float_work_item_batch8x(const nn::workload_data<int32_t> *input_view, nn::workload_data<> *output_view, uint16_t NoBatch8)
     {
         const auto input_width = input_view->parent->lengths.t[NN_DATA_COORD_z] * input_view->parent->lengths.t[NN_DATA_COORD_p];
         const auto output_width = output_view->view_end.t[NN_DATA_COORD_x] - output_view->view_begin.t[NN_DATA_COORD_x] + 1;
@@ -481,7 +481,7 @@ namespace int16_fixedpoint {
         }
     }
 
-    void softmax_i32::run_softmax_int32_float_work_item_latency(const nn::workload_data<int32_t> *input_view, nn::workload_data<float> *output_view)
+    void softmax_i32::run_softmax_int32_float_work_item_latency(const nn::workload_data<int32_t> *input_view, nn::workload_data<> *output_view)
     {
         const auto input_width = input_view->parent->lengths.t[NN_DATA_COORD_z] * input_view->parent->lengths.t[NN_DATA_COORD_p];
         const auto output_width = output_view->view_end.t[NN_DATA_COORD_x] - output_view->view_begin.t[NN_DATA_COORD_x] + 1;
@@ -625,12 +625,12 @@ namespace int16_fixedpoint {
 
     std::vector<nn_workload_data_t *> softmax_i32::create_inputs(bool allocate_delta)
     {
-        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, float>::create(device, num_features, batch_size) };
+        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, nn::layout_nx_f32>::create(device, num_features, batch_size) };
     }
 
     std::vector<nn_workload_data_t *> softmax_i32::create_outputs(bool allocate_delta)
     {
-        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, float>::create(device, num_features, batch_size) };
+        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, nn::layout_nx_f32>::create(device, num_features, batch_size) };
     }
 
     void softmax_i32::forward(const std::vector<const nn_workload_data_t *> &inputs, const std::vector<const nn_workload_data_t *> &parameters, const std::vector<nn_workload_data_t *> &outputs)
@@ -639,10 +639,10 @@ namespace int16_fixedpoint {
         assert(outputs.size() == 1);
 
         forward(reinterpret_cast<const nn::workload_data<int32_t> *>(inputs[0]),
-            reinterpret_cast<nn::workload_data<float> *>(outputs[0]));
+                nn::workload_data_cast<>(outputs[0]));
     }
 
-    void softmax_i32::forward(const nn::workload_data<int32_t> *input, nn::workload_data<float> *output)
+    void softmax_i32::forward(const nn::workload_data<int32_t> *input, nn::workload_data<> *output)
     {
         auto batch_size = input->parent->lengths.t[NN_DATA_COORD_n];
         switch (batch_size)
@@ -668,7 +668,7 @@ namespace int16_fixedpoint {
     void run_softmax_int32_float_work_item(nn_workload_item *const work_item, nn_device_internal* device)
     {
         nn::workload_data<int32_t>* input_view = reinterpret_cast<nn::workload_data<int32_t> *>(work_item->input[0].get_data_view());
-        nn::workload_data<float>* output_view = reinterpret_cast<nn::workload_data<float> *>(work_item->output[0]);
+        nn::workload_data<>* output_view = nn::workload_data_cast<>(work_item->output[0]);
 
         static_cast<softmax_i32 *>(work_item->primitive)->forward(input_view, output_view);
     }

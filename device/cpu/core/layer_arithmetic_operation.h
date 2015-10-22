@@ -32,12 +32,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace layer {
 
-/* Examples of operation performed by arithmetic primitive 
+/* Examples of operation performed by arithmetic primitive
    (alpha, beta, gamma are scalars, imput_A and input_B are of workload_data type):
-   
+
    (1) output = gamma * ( input_A {ARITHMETIC_FUNCTION} input_B )
-       Where {ARITHMETIC_FUNCTION} is addition, subtraction, multiplication or division  
-   
+       Where {ARITHMETIC_FUNCTION} is addition, subtraction, multiplication or division
+
    (2) output = alpha * input_A {ARITHMETIC_FUNCTION} beta * input_B
         Where {ARITHMETIC_FUNCTION} is addition or subtraction
 */
@@ -70,31 +70,45 @@ class arithmetic_f32 : public helper_zxyn_f32::primitive_zxyn_f32_base {
 
     virtual std::vector<nn_workload_data_t *> create_parameters(bool allocate_delta = false) override;
 
-    virtual bool validate_input(size_t index, nn_workload_data_t *data) override;
+    bool validate_input(size_t index, nn_workload_data_t *data) override;
 
-    virtual void forward(const std::vector<const nn_workload_data_t *> &inputs,
+    void forward(const std::vector<const nn_workload_data_t *> &inputs,
+                 const std::vector<const nn_workload_data_t *> &parameters,
+                 const std::vector<nn_workload_data_t *> &outputs) override;
+
+    void prepare_forward(const std::vector<const nn_workload_data_t *> &inputs,
                          const std::vector<const nn_workload_data_t *> &parameters,
                          const std::vector<nn_workload_data_t *> &outputs) override;
+
+    std::vector<float> get_input_feat_periodic(const std::vector<const nn_workload_data_t *> &parameters) const;
+    bool is_linear() const { return (arithmetic_function == NN_ARITHMETIC_FUNCTION_SUBTRACTION)
+                                    or (arithmetic_function == NN_ARITHMETIC_FUNCTION_ADDITION); }
 
   protected:
     const NN_ARITHMETIC_FUNCTION arithmetic_function;
     float alpha, beta, gamma;
+    std::vector<nn_multithreaded_request> job;
+    std::tuple<float*, float*> prepared_for;
 
     virtual size_t get_required_input_w() override;
     virtual size_t get_required_input_h() override;
 
   private:
-    void forward(const nn::workload_data<float> *input,
-                 const nn::workload_data<float> *factor,
-                 nn::workload_data<float> *output);
+    void forward(const nn::workload_data<nn::layout_f32> *input,
+                 const nn::workload_data<nn::layout_f32> *factor,
+                 nn::workload_data<nn::layout_f32> *output);
 
-    void run_arithmetic_operation_work_item(const nn::workload_data<float> *input,
-                                            const nn::workload_data<float> *factor,
-                                            nn::workload_data<float> *output);
+    void prepare_forward(const nn::workload_data<nn::layout_f32> *input,
+                         const nn::workload_data<nn::layout_f32> *factor,
+                         nn::workload_data<nn::layout_f32> *output);
+
+    void run_arithmetic_operation_work_item(const nn::workload_data<nn::layout_f32> *input,
+                                            const nn::workload_data<nn::layout_f32> *factor,
+                                            nn::workload_data<nn::layout_f32> *output);
     template <NN_ARITHMETIC_FUNCTION T_function, scalar_op_type scalar_op>
-    void process_arithmetic_operation(const nn::workload_data<float> *input,
-                                      const nn::workload_data<float> *factor,
-                                      nn::workload_data<float> *output);
+    void process_arithmetic_operation(const nn::workload_data<nn::layout_f32> *input,
+                                      const nn::workload_data<nn::layout_f32> *factor,
+                                      nn::workload_data<nn::layout_f32> *output);
     friend void unpack_arithmetic_callback_handle(void *void_handle);
 };
 } // namespace layer

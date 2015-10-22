@@ -30,8 +30,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "device/api/nn_data_0.h"
 #include <limits>
 
-
-
     //Fills nn::data's buffer. Object can be filled with const or random value.
     //If random you can specify range.
     void nn_data_populate(
@@ -49,3 +47,23 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
         nn::data<float>* in_out,
         float min_val,
         float max_val);
+
+    void nn_data_populate_normal_distribution(
+        nn::data<float>* in_out,
+        float avg,
+        float margin);
+
+    // Checks equality of nn::data.
+    // For values less than absoulte_error_limit, absolute error will be counted
+    // for others, the relatve error will be counted.
+    // Function returns false if error will exceed the threshold.
+    // Default values:
+    // relative_error_threshold = 1e-3
+    // absolute_error_threshold = 1e-6
+    // absoulte_error_limit = 1e-4
+     bool compare_data(
+            nn::data<float>* item,
+            nn::data<float>* ref_item,
+            float relative_error_threshold = 1e-3,
+            float absolute_error_threshold = 1e-6,
+            float absoulte_error_limit = 1e-4);

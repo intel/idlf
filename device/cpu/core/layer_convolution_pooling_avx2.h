@@ -55,24 +55,24 @@ class convolution_pooling_f32_2x2stride2 : public convolution_f32 {
     virtual ~convolution_pooling_f32_2x2stride2() {}
 
   protected:
-    virtual void forward(const nn::workload_data<float> *input,
-                         const nn::workload_data<float> *weights,
-                         const nn::workload_data<float> *bias,
-                         nn::workload_data<float> *output);
+    virtual void forward(const nn::workload_data<> *input,
+                         const nn::workload_data<> *weights,
+                         const nn::workload_data<> *bias,
+                         nn::workload_data<> *output);
 
     virtual size_t get_required_input_w() override;
     virtual size_t get_required_input_h() override;
 
   private:
-    void choose_convolution_maxpool_padding_mode_and_activation(const nn::workload_data<float> *input_view,
-                                                                const nn::workload_data<float> *weights_view,
-                                                                const nn::workload_data<float> *bias_view,
-                                                                nn::workload_data<float> *output_view);
+    void choose_convolution_maxpool_padding_mode_and_activation(const nn::workload_data<> *input_view,
+                                                                const nn::workload_data<> *weights_view,
+                                                                const nn::workload_data<> *bias_view,
+                                                                nn::workload_data<> *output_view);
     template <NN_ACTIVATION_FUNCTION T_activation>
-    void run_convolution_maxpool(const nn::workload_data<float> *input_view,
-                                 const nn::workload_data<float> *weights_view,
-                                 const nn::workload_data<float> *bias_view,
-                                 nn::workload_data<float> *output_view);
+    void run_convolution_maxpool(const nn::workload_data<> *input_view,
+                                 const nn::workload_data<> *weights_view,
+                                 const nn::workload_data<> *bias_view,
+                                 nn::workload_data<> *output_view);
 
     friend void unpack_convolve_maxpooling2x2_stride2x2_callback_handle(void *void_handle);
 

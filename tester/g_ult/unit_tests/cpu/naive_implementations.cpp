@@ -26,6 +26,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "naive_implementations.h"
+#include <cassert>
+#include <cstring>
+#include <algorithm>
+#include <cfloat>
+#include <iostream>
 
 //cpu_layer_merge_convolution_int16_fixedpoint_avx2_compilation.cpp #1
 //cpu_layer_normalization_response_across_maps_fixedpoint.cpp
@@ -177,7 +182,9 @@ void ult_nn_merge_convolution_fixedpoint_both_initialize_matrices(
             }
         }
     }
+
     _mm_free(inputT);
+    _mm_free(weightT);
 }
 
 //cpu_layer_merge_convolution_int16_fixedpoint_avx2_compilation.cpp #4
@@ -260,6 +267,9 @@ bool ult_nn_merge_convolution_fixedpoint_check_outputs(
             comparePtr += output_feature_map_height * output_feature_map_width * OFMOutBlock * NUM_MERGED_CONVOLUTIONS;
         }
     }
+
+    _mm_free(outputT);
+    _mm_free(outputT2);
 
     return passed;
 }
@@ -360,6 +370,8 @@ void ult_nn_convolve_fp_naive(
             }
         }
     }
+
+    _mm_free(output_ref_temp);
 }
 
 //cpu_layer_normalization.cpp
@@ -592,7 +604,7 @@ void ult_nn_lrn_fp_comp_naive(
 }
 
 //cpu_layer_pooling_avx2.cpp
-void run_reference(nn::workload_data<float> *input,
+void run_reference(nn::workload_data<> *input,
     nn::data<float, 4> &output,
     size_t pool_size_x,
     size_t pool_size_y,
@@ -696,12 +708,24 @@ void cpu_layer_softmax(
         batch < work_item->output[0]->parent->lengths.t[NN_DATA_COORD_n];
         ++batch)
     {
+        {
+            float max_value;
+            uint32_t output_element = 0;
+            max_value = nn_workload_data_get<float>(work_item->input[0].get_data_view(), batch, output_element++, 0, 0, 0, 0);
+            while(output_element < work_item->output[0]->parent->lengths.t[NN_DATA_COORD_x])
+                max_value = std::max(max_value, nn_workload_data_get<float>(work_item->input[0].get_data_view(), batch, output_element++, 0, 0, 0, 0));
+
+            for(uint32_t output = 0; output < work_item->output[0]->parent->lengths.t[NN_DATA_COORD_x]; ++output)
+                nn_workload_data_get<float>(work_item->output[0], batch, output, 0, 0, 0, 0) =
+                    nn_workload_data_get<float>(work_item->input[0].get_data_view(), batch, output, 0, 0, 0, 0) - max_value;
+        }
+
         float sum = 0.0f;
         for (uint32_t output_element = 0;
             output_element < work_item->output[0]->parent->lengths.t[NN_DATA_COORD_x];
             ++output_element)
         {
-            float value = exp(nn_workload_data_get<float>(work_item->input[0].get_data_view(), batch, output_element, 0, 0, 0, 0));
+            float value = exp(nn_workload_data_get<float>(work_item->output[0], batch, output_element, 0, 0, 0, 0));
             sum += value;
 
             nn_workload_data_get<float>(work_item->output[0], batch, output_element, 0, 0, 0, 0) = value;
@@ -878,7 +902,10 @@ void ult_nn_convolve_naive(
                 for (uint_least32_t input_column = 0, output_column = 0; output_column < output_feature_map_width; input_column += kernel_stride_x, output_column++)
                 {
                     const uint_least32_t out_ofss = output_feature_map_width*output_feature_map_height;
-                    const uint_least32_t out_base = batch*output_feature_map_width*output_feature_map_height*num_output_feature_maps + output_column + output_row*output_feature_map_width + output_feature_map*output_feature_map_width*output_feature_map_height;
+                    const uint_least32_t out_base =
+                        ((batch * num_output_feature_maps + output_feature_map)
+                            * output_feature_map_height + output_row)
+                                * output_feature_map_width + output_column;
                     float accumulator0 = 0.0f;
                     float accumulator1 = 0.0f;
                     float accumulator2 = 0.0f;
@@ -1179,3 +1206,343 @@ void cpu_layer_fullyconnected(
         }
     }
 }
+
+namespace
+{
+
+void calculateSingleOutputFeature(
+    float* in_ref,
+    float* out_ref,
+    float* kernel_ref,
+    float bias,
+    uint64_t num_input_features,
+    uint64_t out_width,
+    uint64_t out_height,
+    uint64_t in_width,
+    uint64_t in_height,
+    uint64_t kernel_width,
+    uint64_t kernel_height,
+    uint64_t kernel_stride_x,
+    uint64_t kernel_stride_y,
+    uint64_t kernel_col_shift,
+    uint64_t kernel_row_shift)
+{
+    for (uint64_t out_row = 0u; out_row < out_height; ++out_row)
+    {
+        for (uint64_t out_col = 0u; out_col < out_width; ++out_col)
+        {
+            float acc = bias;
+
+            for (uint64_t kern_row = 0u; kern_row < kernel_height; ++kern_row)
+            {
+                uint64_t in_row_shift = out_row * kernel_stride_y + kern_row;
+                if (in_row_shift < kernel_row_shift) continue;
+                uint64_t in_row = in_row_shift - kernel_row_shift;
+                if (in_row >= in_height) continue;
+                for (uint64_t kern_col = 0u; kern_col < kernel_width; ++kern_col)
+                {
+                    uint64_t in_col_shift = out_col * kernel_stride_x + kern_col;
+                    if (in_col_shift < kernel_col_shift) continue;
+                    uint64_t in_col = in_col_shift - kernel_col_shift;
+                    if (in_col >= in_width) continue;
+
+                    for (uint64_t input_feature = 0u; input_feature < num_input_features; ++input_feature)
+                    {
+                        float weight = kernel_ref[(kern_col + kern_row * kernel_width) * num_input_features + input_feature];
+                        float input = in_ref[(in_row * in_width + in_col) * num_input_features + input_feature];
+                        acc += weight * input;
+                    }
+                }
+            }
+
+            out_ref[out_row * out_width + out_col] = acc;
+        }
+    }
+}
+
+unsigned strided_output_size(unsigned size, unsigned shift)
+{
+    if (size == 0) return 0;
+    return (size - 1) / shift + 1;
+}
+
+} //namespace
+
+void ult_nn_naive_convolve_set_input_value(
+    float* input_ref,
+    uint_least32_t width,
+    uint_least32_t height,
+    uint_least32_t feats,
+    uint_least32_t batch,
+    uint_least32_t column,
+    uint_least32_t row,
+    uint_least32_t feat,
+    float value)
+{
+    input_ref[((batch * height + row) * width + column) * feats + feat] = value;
+}
+
+void ult_nn_naive_convolve_set_kernel_value(
+    float* kernel_ref,
+    uint_least32_t width,
+    uint_least32_t height,
+    uint_least32_t in_feats,
+    uint_least32_t column,
+    uint_least32_t row,
+    uint_least32_t in_feat,
+    uint_least32_t out_feat,
+    float value)
+{
+    kernel_ref[((out_feat * height + row) * width + column) * in_feats + in_feat] = value;
+}
+
+float ult_nn_naive_convolve_get_output_value(
+    float* output_ref,
+    uint_least32_t width,
+    uint_least32_t height,
+    uint_least32_t feats,
+    uint_least32_t batch,
+    uint_least32_t column,
+    uint_least32_t row,
+    uint_least32_t feat)
+{
+    return output_ref[((batch * feats + feat) * height + row) * width + column];
+}
+
+void ult_nn_naive_convolve(
+    float* input_ref,
+    float* output_ref,
+    float* kernel_ref,
+    float* bias_ref,
+    uint64_t num_output_features,
+    uint64_t num_input_features,
+    uint64_t out_width,
+    uint64_t out_height,
+    uint64_t input_width,
+    uint64_t input_height,
+    uint64_t kernel_width,
+    uint64_t kernel_height,
+    uint64_t kernel_stride_x,
+    uint64_t kernel_stride_y,
+    uint64_t kernel_offset_x,
+    uint64_t kernel_offset_y)
+{
+    memset(output_ref, 0, sizeof(float) * out_width * out_height * num_output_features);
+    for (uint64_t ofeat = 0u; ofeat < num_output_features; ++ofeat)
+    {
+        calculateSingleOutputFeature(
+            input_ref,
+            output_ref + ofeat * out_width * out_height,
+            kernel_ref + ofeat * kernel_width * kernel_height * num_input_features,
+            bias_ref[ofeat],
+            num_input_features,
+            out_width,
+            out_height,
+            input_width,
+            input_height,
+            kernel_width,
+            kernel_height,
+            kernel_stride_x,
+            kernel_stride_y,
+            kernel_offset_x,
+            kernel_offset_y);
+    }
+}
+void ult_nn_naive_convolve_all_pics(
+    float* input_ref,
+    float* output_ref,
+    float* kernel_ref,
+    float* bias_ref,
+    uint64_t batch_size,
+    uint64_t out_features,
+    uint64_t input_features,
+    uint64_t out_width,
+    uint64_t out_height,
+    uint64_t input_width,
+    uint64_t input_height,
+    uint64_t kernel_width,
+    uint64_t kernel_height,
+    uint64_t kernel_stride_x,
+    uint64_t kernel_stride_y,
+    uint64_t kernel_offset_x,
+    uint64_t kernel_offset_y)
+{
+    uint64_t size_of_single_input = input_features * input_width * input_height;
+    uint64_t size_of_single_output = out_features * out_width * out_height;
+    for (uint64_t b = 0; b < batch_size; ++b)
+        ult_nn_naive_convolve(
+            input_ref + b * size_of_single_input,
+            output_ref + b * size_of_single_output,
+            kernel_ref,
+            bias_ref,
+            out_features,
+            input_features,
+            out_width,
+            out_height,
+            input_width,
+            input_height,
+            kernel_width,
+            kernel_height,
+            kernel_stride_x,
+            kernel_stride_y,
+            kernel_offset_x,
+            kernel_offset_y);
+        
+}
+
+void ult_nn_naive_convolve_simplified(
+    float* input_ref,
+    float* output_ref,
+    float* kernel_ref,
+    uint64_t num_output_feature_maps,
+    uint64_t num_input_feature_maps,
+    uint64_t input_width,
+    uint64_t input_height,
+    uint64_t kernel_width,
+    uint64_t kernel_height,
+    uint64_t kernel_stride_x,
+    uint64_t kernel_stride_y)
+{
+    uint64_t out_width = strided_output_size(input_width, kernel_stride_x);
+    uint64_t out_height = strided_output_size(input_height, kernel_stride_y);
+    std::vector<float> empty_bias(num_output_feature_maps, 0);
+    ult_nn_naive_convolve(input_ref, output_ref, kernel_ref, &empty_bias.front(),
+        num_output_feature_maps, num_input_feature_maps,
+        out_width, out_height,
+        input_width, input_height,
+        kernel_width, kernel_height,
+        kernel_stride_x, kernel_stride_y,
+        kernel_width / 2, kernel_height / 2);
+}
+
+void ult_nn_simplest_convolve_no_depth(
+    float* in_ref,
+    float* out_ref,
+    float* kernel_ref,
+    uint64_t in_width,
+    uint64_t in_height,
+    uint64_t kernel_width,
+    uint64_t kernel_height,
+    uint64_t kernel_stride_x,
+    uint64_t kernel_stride_y)
+{
+    uint64_t out_width = strided_output_size(in_width, kernel_stride_x);
+    uint64_t out_height = strided_output_size(in_height, kernel_stride_y);
+
+    uint64_t kernel_row_shift = (kernel_height >> 1);
+    uint64_t kernel_col_shift = (kernel_width >> 1);
+
+    for (uint64_t out_row = 0u; out_row < out_height; ++out_row)
+    {
+        for (uint64_t out_col = 0u; out_col < out_width; ++out_col)
+        {
+            float acc = 0.0f;
+
+            for (uint64_t kern_row = 0u; kern_row < kernel_height; ++kern_row)
+            {
+                uint64_t in_row_shift = out_row * kernel_stride_y + kern_row;
+                if (in_row_shift < kernel_row_shift) continue;
+                uint64_t in_row = in_row_shift - kernel_row_shift;
+                if (in_row >= in_height) continue;
+                for (uint64_t kern_col = 0u; kern_col < kernel_width; ++kern_col)
+                {
+                    uint64_t in_col_shift = out_col * kernel_stride_x + kern_col;
+                    if (in_col_shift < kernel_col_shift) continue;
+                    uint64_t in_col = in_col_shift - kernel_col_shift;
+                    if (in_col >= in_width) continue;
+
+                    auto weight = kernel_ref[kern_col + kern_row * kernel_width];
+                    auto input = in_ref[in_row * in_width + in_col];
+
+                    acc += weight * input;
+                }
+            }
+
+            out_ref[out_row * out_width + out_col] = acc;
+        }
+    }
+}
+
+void ult_nn_simplest_convolve_no_depth_no_stride(
+    float* in_ref,
+    float* out_ref,
+    float* kernel_ref,
+    uint64_t width,
+    uint64_t height,
+    uint64_t kernel_width,
+    uint64_t kernel_height)
+{
+    uint64_t kernel_row_shift = (kernel_height >> 1);
+    uint64_t kernel_col_shift = (kernel_width >> 1);
+    for (uint64_t out_row = 0u; out_row < height; ++out_row)
+    {
+        for (uint64_t out_col = 0u; out_col < width; ++out_col)
+        {
+            float acc = 0.0f;
+
+            for (auto kern_row = 0u; kern_row < kernel_height; ++kern_row)
+            {
+                if (out_row + kern_row < kernel_row_shift) continue;
+                if (out_row + kern_row - kernel_row_shift >= height) continue;
+                uint64_t in_row = out_row + kern_row - kernel_row_shift;
+                for (uint64_t kern_col = 0u; kern_col < kernel_width; ++kern_col)
+                {
+                    if (out_col + kern_col < kernel_col_shift) continue;
+                    if (out_col + kern_col - kernel_col_shift >= width) continue;
+                    uint64_t in_col = out_col + kern_col - kernel_col_shift;
+
+                    auto weight = kernel_ref[kern_col + kern_row * kernel_width];
+                    auto input = in_ref[in_row * width + in_col];
+
+                    acc += weight * input;
+                }
+            }
+
+            out_ref[out_row * width + out_col] = acc;
+        }
+    }
+}
+
+void ult_nn_simplest_convolve_no_stride_depth_of_input(
+    float* in_ref,
+    float* out_ref,
+    float* kernel_ref,
+    uint64_t num_input_features,
+    uint64_t width,
+    uint64_t height,
+    uint64_t kernel_width,
+    uint64_t kernel_height)
+{
+    uint64_t kernel_row_shift = (kernel_height >> 1);
+    uint64_t kernel_col_shift = (kernel_width >> 1);
+    for (auto out_row = 0u; out_row < height; ++out_row)
+    {
+        for (uint64_t out_col = 0u; out_col < width; ++out_col)
+        {
+            float acc = 0.0f;
+
+            for (uint64_t kern_row = 0u; kern_row < kernel_height; ++kern_row)
+            {
+                if (out_row + kern_row < kernel_row_shift) continue;
+                if (out_row + kern_row - kernel_row_shift >= height) continue;
+                uint64_t in_row = out_row + kern_row - kernel_row_shift;
+                for (uint64_t kern_col = 0u; kern_col < kernel_width; ++kern_col)
+                {
+                    if (out_col + kern_col < kernel_col_shift) continue;
+                    if (out_col + kern_col - kernel_col_shift >= width) continue;
+                    uint64_t in_col = out_col + kern_col - kernel_col_shift;
+
+                    for (auto input_feature = 0u; input_feature < num_input_features; ++input_feature)
+                    {
+                        float weight = kernel_ref[(kern_col + kern_row * kernel_width) * num_input_features + input_feature];
+                        float input = in_ref[(in_row * width + in_col) * num_input_features + input_feature];
+                        acc += weight * input;
+                    }
+                }
+            }
+
+            out_ref[out_row * width + out_col] = acc;
+        }
+    }
+}
+

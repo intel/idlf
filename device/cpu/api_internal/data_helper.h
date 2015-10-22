@@ -69,84 +69,15 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_ZBLOCKXYZN, T> {
     static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<T, 4> *source) {
         throw std::logic_error("The method or operation is not implemented.");
     }
-
-    static nn::workload_data<T> *merge_z(const std::vector<nn::workload_data<T> *> &source) {
-        auto buffer_length = source.front()->parent->lengths;
-        const auto view_begin = source.front()->view_begin;
-        const auto view_end = source.front()->view_end;
-
-        uint32_t z_size = 0;
-        for (const auto& element : source){
-            assert(element->parent->tag == NN_WORKLOAD_DATA_TAG_ZBLOCKXYZN);
-            assert(element->parent.use_count() == 1);
-            assert(element->parent->lengths.t[NN_DATA_COORD_x] == buffer_length.t[NN_DATA_COORD_x]);
-            assert(element->parent->lengths.t[NN_DATA_COORD_y] == buffer_length.t[NN_DATA_COORD_y]);
-            assert(element->parent->lengths.t[NN_DATA_COORD_n] == buffer_length.t[NN_DATA_COORD_n]);
-
-            assert(element->view_begin.t[NN_DATA_COORD_z] == 0);
-            assert(element->view_end.t[NN_DATA_COORD_z] + 1 == element->parent->lengths.t[NN_DATA_COORD_z]);
-
-            assert(element->view_begin.t[NN_DATA_COORD_x] == view_begin.t[NN_DATA_COORD_x]);
-            assert(element->view_begin.t[NN_DATA_COORD_y] == view_begin.t[NN_DATA_COORD_y]);
-            assert(element->view_begin.t[NN_DATA_COORD_n] == view_begin.t[NN_DATA_COORD_n]);
-
-            assert(element->view_end.t[NN_DATA_COORD_x] == view_end.t[NN_DATA_COORD_x]);
-            assert(element->view_end.t[NN_DATA_COORD_y] == view_end.t[NN_DATA_COORD_y]);
-            assert(element->view_end.t[NN_DATA_COORD_n] == view_end.t[NN_DATA_COORD_n]);
-
-            z_size += element->parent->lengths.t[NN_DATA_COORD_z];
-        }
-
-        buffer_length.t[NN_DATA_COORD_z] = z_size;
-        auto buffer = new nn::workload_data<T>(NN_WORKLOAD_DATA_TAG_ZXYN, buffer_length, layout);
-        buffer->view_begin = view_begin;
-        buffer->view_end = view_end;
-        buffer->view_end.t[NN_DATA_COORD_z] = buffer_length.t[NN_DATA_COORD_z] - 1;
-
-        uint32_t z_view_begin = 0, z_view_end;
-        for (auto&element : source){
-            z_view_end = z_view_begin + element->parent->lengths.t[NN_DATA_COORD_z] - 1;
-            element->view_begin.t[NN_DATA_COORD_z] = z_view_begin;
-            element->view_end.t[NN_DATA_COORD_z] = z_view_end;
-            z_view_begin = z_view_end + 1;
-
-            element->parent = buffer->parent;
-        }
-
-        // TODO synchronize
-        // TODO copy data over
-
-        return buffer;
-    }
-
-    static std::vector<nn::workload_data<T> *> split_z(size_t part_count,
-        const nn::workload_data<T> *source) {
-
-        assert(source->parent->tag == NN_WORKLOAD_DATA_TAG_ZBLOCKXYZN);
-        assert(source->view_begin.t[NN_DATA_COORD_z] == 0);
-        assert(source->view_end.t[NN_DATA_COORD_z] + 1 == source->parent->lengths.t[NN_DATA_COORD_z]);
-        assert(source->parent->lengths.t[NN_DATA_COORD_z] % part_count == 0);
-
-        uint32_t z_view_size = source->parent->lengths.t[NN_DATA_COORD_z] / static_cast<uint32_t>(part_count);
-        nn_workload_data_coords_t view_begin(0, 0, 0, 0, 0, 0 ), view_end(source->get_length(0) - 1,
-            source->get_length(1) - 1,
-            source->get_length(2) - 1,
-            source->get_length(3) - 1,
-            source->get_length(4) - 1,
-            source->get_length(5) - 1 );
-
-        std::vector<nn::workload_data<T> *> result;
-        for (uint32_t i = 0; i < part_count; ++i) {
-            view_begin.t[NN_DATA_COORD_z] = i * z_view_size;
-            view_end.t[NN_DATA_COORD_z] = (i + 1) * z_view_size - 1;
-            result.push_back(new nn::workload_data<T>(*source, view_begin, view_end));
-        }
-
-        return result;
-    }
 };
+
+template<typename T> inline nn_workload_data_layout_t &data_helper_layout_lookup_pxyznq();
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_pxyznq<float>()                     { return nn::layout_t<nn::layout_pxyznq_f32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_pxyznq<int16_t>()                   { return nn::layout_t<nn::layout_pxyznq_i16>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_pxyznq<nn::layout_zblockxyzn_f32>() { return nn::layout_t<nn::layout_pxyznq_i16>::layout; }
+
 template <typename T>
-const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_ZBLOCKXYZN, T>::layout = nn::workload_data<T>::layout.pxyznq;
+const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_ZBLOCKXYZN, T>::layout = data_helper_layout_lookup_pxyznq<T>();
 
 template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_XBLOCKNX, T> {
     static const nn_workload_data_layout_t &layout;
@@ -171,14 +102,23 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_XBLOCKNX, T> {
         return buffer;
     }
 };
+
+template<typename T> inline nn_workload_data_layout_t &data_helper_layout_lookup_pnzxyq();
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_pnzxyq<float>()               { return nn::layout_t<nn::layout_pnzxyq_f32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_pnzxyq<int16_t>()             { return nn::layout_t<nn::layout_pnzxyq_i16>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_pnzxyq<int32_t>()             { return nn::layout_t<nn::layout_pnzxyq_i32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_pnzxyq<nn::layout_x2nx_f32>() { return nn::layout_t<nn::layout_pnzxyq_i32>::layout; }
+
 template <typename T>
-const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_XBLOCKNX, T>::layout = nn::workload_data<T>::layout.pnzxyq;
+const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_XBLOCKNX, T>::layout = data_helper_layout_lookup_pnzxyq<T>();
 
 template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, T> {
     static const nn_workload_data_layout_t &layout;
 
+    using value_type = typename nn::workload_data<T>::item_type;
+
     template <bool copy_delta = false>
-    static void copy(nn_device_internal *device, nn::data<T, 4> *destination, const nn::workload_data<T> *source) {
+    static void copy(nn_device_internal *device, nn::data<value_type, 4> *destination, const nn::workload_data<T> *source) {
         assert(source->parent->layout==layout);
 
         auto source_buffer = source->parent->data_buffer;
@@ -200,7 +140,7 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, T> {
             source->parent->lengths.t[NN_DATA_COORD_y] == size_y) {
             // cover all buffer not only the view
 
-            if (destination->count() == source->parent->buffer_size / sizeof(T)) {
+            if (destination->count() == source->parent->buffer_size / sizeof(value_type)) {
                 // view matches buffer
                 memcpy(destination->buffer, source_buffer, source->parent->buffer_size);
             } else {
@@ -211,13 +151,13 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, T> {
                 for (size_t n = 0; n < size_n; ++n)
                     for (size_t y = 0; y < size_y; ++y)
                         for (size_t x = 0; x < size_x; ++x) {
-                            void *source_ptr = reinterpret_cast<T *>(source_buffer) +
+                            void *source_ptr = reinterpret_cast<value_type *>(source_buffer)+
                                                source->view_begin.t[NN_DATA_COORD_z] +
                                                stride_x * x +
                                                stride_y * y +
                                                stride_n * (source->view_begin.t[NN_DATA_COORD_n] + n);
                             memcpy(
-                                &destination->at(0, x, y, n), source_ptr, sizeof(T) * source_length.t[NN_DATA_COORD_z]);
+                                &destination->at(0, x, y, n), source_ptr, sizeof(value_type) * source_length.t[NN_DATA_COORD_z]);
                         }
             }
         } else {
@@ -233,18 +173,18 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, T> {
             for (size_t n = 0; n < source_length.t[NN_DATA_COORD_n]; ++n)
                 for (size_t y = 0; y < source_length.t[NN_DATA_COORD_y]; ++y)
                     for (size_t x = 0; x < source_length.t[NN_DATA_COORD_x]; ++x) {
-                        void *source_ptr = reinterpret_cast<T *>(source_buffer) +
+                        void *source_ptr = reinterpret_cast<value_type *>(source_buffer)+
                                            source->view_begin.t[NN_DATA_COORD_z] +
                                            stride_x * (source->view_begin.t[NN_DATA_COORD_x] + x) +
                                            stride_y * (source->view_begin.t[NN_DATA_COORD_y] + y) +
                                            stride_n * (source->view_begin.t[NN_DATA_COORD_n] + n);
-                        memcpy(&destination->at(0, x, y, n), source_ptr, sizeof(T) * source_length.t[NN_DATA_COORD_z]);
+                        memcpy(&destination->at(0, x, y, n), source_ptr, sizeof(value_type) * source_length.t[NN_DATA_COORD_z]);
                     }
         }
     }
 
     template <bool copy_delta = false>
-    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<T, 4> *source) {
+    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<value_type, 4> *source) {
         assert(destination->parent->layout==layout);
 
         const size_t size_n = source->size[3], size_x = source->size[1], size_y = source->size[2],
@@ -259,7 +199,7 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, T> {
             destination->parent->lengths.t[NN_DATA_COORD_y] == size_y) {
             // cover all buffer not only the view
 
-            if (source->count() == destination->parent->buffer_size / sizeof(T)) {
+            if (source->count() == destination->parent->buffer_size / sizeof(value_type)) {
                 // view matches buffer
                 if(copy_delta)
                     memcpy(destination->parent->delta_buffer, source->buffer, destination->parent->buffer_size);
@@ -274,18 +214,18 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, T> {
                     for (size_t y = 0u; y < size_y; ++y)
                         for (size_t x = 0u; x < size_x; ++x)
                             for (size_t z = 0u; z < size_z; ++z)
-                                ((T *)(dest_buffer))
+                                ((value_type *)(dest_buffer))
                                     [z +
                                      buffer_size_z *
                                          (x + buffer_size_x * (y + buffer_size_y * n))] =
-                                        ((T *)(source->buffer))[z + size_z * (x + size_x * (y + size_y * n))];
+                                         ((value_type *)(source->buffer))[z + size_z * (x + size_x * (y + size_y * n))];
             }
         }else{
             // cover only the view
             assert(destination_length.t[NN_DATA_COORD_x] == size_x);
             assert(destination_length.t[NN_DATA_COORD_y] == size_y);
 
-            if (source->count() == destination->parent->buffer_size / sizeof(T)) {
+            if (source->count() == destination->parent->buffer_size / sizeof(value_type)) {
                 // view matches buffer
                 memcpy(destination->parent->data_buffer, source->buffer, destination->parent->buffer_size);
             } else {
@@ -298,11 +238,11 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, T> {
                     for (size_t y = 0u; y < size_y; ++y)
                         for (size_t x = 0u; x < size_x; ++x)
                             for (size_t z = 0u; z < size_z; ++z)
-                                ((T *)(destination->parent->data_buffer))
+                                ((value_type *)(destination->parent->data_buffer))
                                     [z +
                                      buffer_size_z *
                                          (x + view_begin_x + buffer_size_x * (y + view_begin_y + buffer_size_y * n))] =
-                                        ((T *)(source->buffer))[z + size_z * (x + size_x * (y + size_y * n))];
+                                         ((value_type *)(source->buffer))[z + size_z * (x + size_x * (y + size_y * n))];
             }
         }
     }
@@ -342,7 +282,7 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, T> {
         if (layout != data->parent->layout)
             return false;
 
-        const auto view_size = reinterpret_cast<const nn::workload_data<T> *>(data)->get_length();
+        const auto view_size = static_cast<const nn::workload_data<T> *>(data)->get_length();
 
         if (view_size.t[NN_DATA_COORD_n] != n_size)
             return false;
@@ -370,96 +310,25 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, T> {
 
         return true;
     }
-
-    static std::vector<nn::workload_data<T> *> split_z(size_t part_count,
-                                                            const nn::workload_data<float> *source) {
-
-        assert(source->parent->tag == NN_WORKLOAD_DATA_TAG_ZXYN);
-        assert(source->view_begin.t[NN_DATA_COORD_z] == 0);
-        assert(source->view_end.t[NN_DATA_COORD_z] + 1 == source->parent->lengths.t[NN_DATA_COORD_z]);
-        assert(source->parent->lengths.t[NN_DATA_COORD_z] % part_count == 0);
-
-        uint32_t z_view_size = source->parent->lengths.t[NN_DATA_COORD_z] / static_cast<uint32_t>(part_count);
-        nn_workload_data_coords_t view_begin(0, 0, 0, 0, 0, 0), view_end(source->get_length(0) - 1,
-                                                                               source->get_length(1) - 1,
-                                                                               source->get_length(2) - 1,
-                                                                               source->get_length(3) - 1,
-                                                                               source->get_length(4) - 1,
-                                                                               source->get_length(5) - 1);
-
-        std::vector<nn::workload_data<T> *> result;
-        for (uint32_t i = 0; i < part_count; ++i) {
-            view_begin.t[NN_DATA_COORD_z] = i * z_view_size;
-            view_end.t[NN_DATA_COORD_z] = (i + 1) * z_view_size - 1;
-            result.push_back(new nn::workload_data<T>(*source, view_begin, view_end));
-        }
-
-        return result;
-    }
-
-    static nn::workload_data<T> *merge_z(const std::vector<nn::workload_data<T> *> &source) {
-        auto buffer_length = source.front()->parent->lengths;
-        const auto view_begin = source.front()->view_begin;
-        const auto view_end = source.front()->view_end;
-        bool source_has_delta_buffer = false;
-
-        uint32_t z_size = 0;
-        for(const auto& element : source){
-            assert(element->parent->tag == NN_WORKLOAD_DATA_TAG_ZXYN);
-            assert(element->parent.use_count() == 1);
-            assert(element->parent->lengths.t[NN_DATA_COORD_x] == buffer_length.t[NN_DATA_COORD_x]);
-            assert(element->parent->lengths.t[NN_DATA_COORD_y] == buffer_length.t[NN_DATA_COORD_y]);
-            assert(element->parent->lengths.t[NN_DATA_COORD_n] == buffer_length.t[NN_DATA_COORD_n]);
-
-            assert(element->view_begin.t[NN_DATA_COORD_z] == 0);
-            assert(element->view_end.t[NN_DATA_COORD_z] + 1 == element->parent->lengths.t[NN_DATA_COORD_z]);
-
-            assert(element->view_begin.t[NN_DATA_COORD_x] == view_begin.t[NN_DATA_COORD_x]);
-            assert(element->view_begin.t[NN_DATA_COORD_y] == view_begin.t[NN_DATA_COORD_y]);
-            assert(element->view_begin.t[NN_DATA_COORD_n] == view_begin.t[NN_DATA_COORD_n]);
-
-            assert(element->view_end.t[NN_DATA_COORD_x] == view_end.t[NN_DATA_COORD_x]);
-            assert(element->view_end.t[NN_DATA_COORD_y] == view_end.t[NN_DATA_COORD_y]);
-            assert(element->view_end.t[NN_DATA_COORD_n] == view_end.t[NN_DATA_COORD_n]);
-
-            z_size += element->parent->lengths.t[NN_DATA_COORD_z];
-            source_has_delta_buffer |= element->parent->delta_buffer != nullptr;
-        }
-
-        buffer_length.t[NN_DATA_COORD_z] = z_size;
-        auto buffer = new nn::workload_data<T>(NN_WORKLOAD_DATA_TAG_ZXYN, buffer_length, layout);
-        if(source_has_delta_buffer)
-            buffer->allocate_delta_buffer();
-
-        buffer->view_begin = view_begin;
-        buffer->view_end = view_end;
-        buffer->view_end.t[NN_DATA_COORD_z] = buffer_length.t[NN_DATA_COORD_z] - 1;
-
-        uint32_t z_view_begin = 0, z_view_end;
-        for(auto&element:source){
-            z_view_end = z_view_begin + element->parent->lengths.t[NN_DATA_COORD_z] - 1;
-            element->view_begin.t[NN_DATA_COORD_z] = z_view_begin;
-            element->view_end.t[NN_DATA_COORD_z] = z_view_end;
-            z_view_begin = z_view_end + 1;
-
-            element->parent = buffer->parent;
-        }
-
-        // TODO synchronize
-        // TODO copy data over
-
-        return buffer;
-    }
 };
+
+template<typename T> inline nn_workload_data_layout_t &data_helper_layout_lookup_zxynpq();
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_zxynpq<float>()                 { return nn::layout_t<nn::layout_zxynpq_f32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_zxynpq<nn::layout_zxynpq_f32>() { return nn::layout_t<nn::layout_zxynpq_f32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_zxynpq<nn::layout_zxyn_f32>()   { return nn::layout_t<nn::layout_zxynpq_f32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_zxynpq<nn::layout_zxy_f32>()    { return nn::layout_t<nn::layout_zxynpq_f32>::layout; }
+
 template <typename T>
-const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, T>::layout = nn::workload_data<T>::layout.zxynpq;
+const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, T>::layout = data_helper_layout_lookup_zxynpq<T>();
 
 template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_ZXY, T> {
     static const nn_workload_data_layout_t &layout;
 
+    using value_type = typename nn::workload_data<T>::item_type;
+
     // source is XYZ
     template <bool copy_delta>
-    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<T, 3> *source) {
+    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<value_type, 3> *source) {
         assert(destination->parent->layout == layout);
 
         const size_t size_x = source->size[0], size_y = source->size[1], size_z = source->size[2];
@@ -483,8 +352,8 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_ZXY, T> {
         for (size_t y = 0u; y < size_y; ++y)
             for (size_t x = 0u; x < size_x; ++x)
                 for (size_t z = 0u; z < size_z; ++z)
-                    ((T *)(dest_buffer))[z + buffer_size_z * (x + view_begin_x +
-                        buffer_size_x * (y + view_begin_y))] = ((T *)(source->buffer))[x + size_x * (y + size_y * (z))];
+                    ((value_type *)(dest_buffer))[z + buffer_size_z * (x + view_begin_x +
+                        buffer_size_x * (y + view_begin_y))] = ((value_type *)(source->buffer))[x + size_x * (y + size_y * (z))];
     }
 
     static nn::workload_data<T> *create(nn_device_internal *device,
@@ -501,7 +370,7 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_ZXY, T> {
     }
 };
 template <typename T>
-const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_ZXY, T>::layout = nn::workload_data<T>::layout.zxynpq;
+const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_ZXY, T>::layout = data_helper_layout_lookup_zxynpq<T>();
 
 template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_X2NX, T> {
     static const nn_workload_data_layout_t &layout;
@@ -517,14 +386,17 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_X2NX, T> {
         return new nn::workload_data<T>(NN_WORKLOAD_DATA_TAG_X2NX, size, layout);
     }
 };
+
 template <typename T>
-const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_X2NX, T>::layout = nn::workload_data<T>::layout.pnzxyq;
+const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_X2NX, T>::layout = data_helper_layout_lookup_pnzxyq<T>();
 
 template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_NX, T> {
     static const nn_workload_data_layout_t &layout;
 
+    using value_type = typename nn::workload_data<T>::item_type;
+
     template <bool copy_delta = false>
-    static void copy(nn_device_internal *device, nn::data<T, 2> *destination, const nn::workload_data<T> *source) {
+    static void copy(nn_device_internal *device, nn::data<value_type, 2> *destination, const nn::workload_data<T> *source) {
         assert(source->parent->layout==layout);
 
         const auto x_size = destination->size[0], n_size = destination->size[1];
@@ -537,7 +409,7 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_NX, T> {
         assert(source_length.t[NN_DATA_COORD_p] == 1);
         assert(source_length.t[NN_DATA_COORD_q] == 1);
 
-        auto dest = static_cast<T *>(destination->buffer);
+        auto dest = static_cast<value_type *>(destination->buffer);
         for (auto n = 0; n < n_size; ++n)
             for (auto x = 0; x < x_size; ++x)
             if(copy_delta)
@@ -547,7 +419,7 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_NX, T> {
     }
 
     template <bool copy_delta>
-    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<T, 2> *source) {
+    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<value_type, 2> *source) {
         assert(destination->parent->layout == layout);
 
         auto destination_length = destination->get_length();
@@ -570,7 +442,7 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_NX, T> {
     }
 
     template <bool copy_delta>
-    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<T, 4> *source) {
+    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<value_type, 4> *source) {
         assert(destination->parent->layout == layout);
 
         auto destination_length = destination->get_length();
@@ -624,26 +496,38 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_NX, T> {
         return true;
     }
 };
+
+template<typename T> inline nn_workload_data_layout_t &data_helper_layout_lookup_nxyzpq();
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_nxyzpq<float>()                 { return nn::layout_t<nn::layout_nxyzpq_f32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_nxyzpq<int16_t>()               { return nn::layout_t<nn::layout_nxyzpq_i16>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_nxyzpq<int32_t>()               { return nn::layout_t<nn::layout_nxyzpq_i32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_nxyzpq<nn::layout_f32>()        { return nn::layout_t<nn::layout_nxyzpq_f32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_nxyzpq<nn::layout_nxyzpq_f32>() { return nn::layout_t<nn::layout_nxyzpq_f32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_nxyzpq<nn::layout_nx_f32>()     { return nn::layout_t<nn::layout_nxyzpq_f32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_nxyzpq<nn::layout_o_f32>()      { return nn::layout_t<nn::layout_nxyzpq_f32>::layout; }
+
 template <typename T>
-const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_NX, T>::layout = nn::workload_data<T>::layout.nxyzpq;
+const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_NX, T>::layout = data_helper_layout_lookup_nxyzpq<T>();
 
 template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_OI, T> {
     static const nn_workload_data_layout_t &layout;
 
+    using value_type = typename nn::workload_data<T>::item_type;
+
     template <bool copy_delta>
-    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<T, 2> *source) {
+    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<value_type, 2> *source) {
         assert(destination->parent->layout == layout);
 
         auto destination_length = destination->get_length();
-        assert(destination->parent->buffer_size / sizeof(T) == source->count()); // no support for views
+        assert(destination->parent->buffer_size / sizeof(value_type) == source->count()); // no support for views
 
         const auto i_size = source->size[0], o_size = source->size[1];
 
         assert(destination_length.t[NN_DATA_COORD_x] == i_size);
         assert(destination_length.t[NN_DATA_COORD_y] == o_size);
 
-        auto src = static_cast<T *>(source->buffer);
-        auto dst = static_cast<T *>(copy_delta ? destination->parent->delta_buffer : destination->parent->data_buffer);
+        auto src = static_cast<value_type *>(source->buffer);
+        auto dst = static_cast<value_type *>(copy_delta ? destination->parent->delta_buffer : destination->parent->data_buffer);
 
         for (size_t i = 0u; i < i_size; ++i)
             for (size_t o = 0u; o < o_size; ++o)
@@ -651,19 +535,19 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_OI, T> {
     }
 
     template <bool copy_delta>
-    static void copy(nn_device_internal *device, nn::data<T, 2> *destination, const nn::workload_data<T> *source) {
+    static void copy(nn_device_internal *device, nn::data<value_type, 2> *destination, const nn::workload_data<T> *source) {
         assert(source->parent->layout == layout);
 
         auto source_length = source->get_length();
-        assert(source->parent->buffer_size / sizeof(T) == destination->count()); // no support for views
+        assert(source->parent->buffer_size / sizeof(value_type) == destination->count()); // no support for views
 
         const auto i_size = destination->size[0], o_size = destination->size[1];
 
         assert(source_length.t[NN_DATA_COORD_x] == i_size);
         assert(source_length.t[NN_DATA_COORD_y] == o_size);
 
-        auto src = static_cast<T *>(copy_delta ? source->parent->delta_buffer : source->parent->data_buffer);
-        auto dst = static_cast<T *>(destination->buffer);
+        auto src = static_cast<value_type *>(copy_delta ? source->parent->delta_buffer : source->parent->data_buffer);
+        auto dst = static_cast<value_type *>(destination->buffer);
 
         for (size_t i = 0u; i < i_size; ++i)
             for (size_t o = 0u; o < o_size; ++o)
@@ -671,11 +555,11 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_OI, T> {
     }
 
     template <bool copy_delta>
-    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<T, 4> *source) {
+    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<value_type, 4> *source) {
         assert(destination->parent->layout == layout);
 
         auto destination_length = destination->get_length();
-        assert(destination->parent->buffer_size / sizeof(T) == source->count()); // no support for views
+        assert(destination->parent->buffer_size / sizeof(value_type) == source->count()); // no support for views
 
         const auto o_size = source->size[3], x_size = source->size[0], y_size = source->size[1],
                    z_size = source->size[2];
@@ -683,7 +567,7 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_OI, T> {
         assert(destination_length.t[NN_DATA_COORD_x] == x_size * y_size * z_size);
         assert(destination_length.t[NN_DATA_COORD_y] == o_size);
 
-        auto dst = static_cast<T *>(copy_delta ? destination->parent->delta_buffer : destination->parent->data_buffer);
+        auto dst = static_cast<value_type *>(copy_delta ? destination->parent->delta_buffer : destination->parent->data_buffer);
         for (auto y = 0; y < y_size; ++y)
             for (auto x = 0; x < x_size; ++x)
                 for (auto z = 0; z < z_size; ++z)
@@ -692,11 +576,11 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_OI, T> {
     }
 
     template <bool copy_delta>
-    static void copy(nn_device_internal *device, nn::data<T, 4> *destination, const nn::workload_data<T> *source) {
+    static void copy(nn_device_internal *device, nn::data<value_type, 4> *destination, const nn::workload_data<T> *source) {
         assert(source->parent->layout == layout);
 
         auto source_length = source->get_length();
-        assert(source->parent->buffer_size / sizeof(T) == destination->count()); // no support for views
+        assert(source->parent->buffer_size / sizeof(value_type) == destination->count()); // no support for views
 
         const auto o_size = destination->size[3], x_size = destination->size[0], y_size = destination->size[1],
             z_size = destination->size[2];
@@ -704,7 +588,7 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_OI, T> {
         assert(source_length.t[NN_DATA_COORD_x] == x_size * y_size * z_size);
         assert(source_length.t[NN_DATA_COORD_y] == o_size);
 
-        auto src = static_cast<T *>(copy_delta ? source->parent->delta_buffer : source->parent->data_buffer);
+        auto src = static_cast<value_type *>(copy_delta ? source->parent->delta_buffer : source->parent->data_buffer);
         for(auto y = 0; y < y_size; ++y)
             for(auto x = 0; x < x_size; ++x)
                 for(auto z = 0; z < z_size; ++z)
@@ -717,14 +601,22 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_OI, T> {
         return new nn::workload_data<T>(NN_WORKLOAD_DATA_TAG_OI, size, layout, false, allocate_delta);
     }
 };
+
+template<typename T> inline nn_workload_data_layout_t &data_helper_layout_lookup_yxzpqn();
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_yxzpqn<float>()                 { return nn::layout_t<nn::layout_yxzpqn_f32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_yxzpqn<nn::layout_yxzpqn_f32>() { return nn::layout_t<nn::layout_yxzpqn_f32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_yxzpqn<nn::layout_oi_f32>()     { return nn::layout_t<nn::layout_yxzpqn_f32>::layout; }
+
 template <typename T>
-const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_OI, T>::layout = nn::workload_data<T>::layout.yxzpqn;
+const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_OI, T>::layout = data_helper_layout_lookup_yxzpqn<T>();
 
 template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIO, T> {
     static const nn_workload_data_layout_t &layout;
 
+    using value_type = typename nn::workload_data<T>::item_type;
+
     template <bool copy_delta>
-    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<T, 2> *source) {
+    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<value_type, 2> *source) {
         assert(destination->parent->layout==layout);
 
         auto destination_length = destination->get_length();
@@ -758,7 +650,7 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIO, T> {
     }
 
     template <bool copy_delta>
-    static void copy(nn_device_internal *device, nn::data<T, 2> *destination, const nn::workload_data<T> *source) {
+    static void copy(nn_device_internal *device, nn::data<value_type, 2> *destination, const nn::workload_data<T> *source) {
         assert(source->parent->layout == layout);
 
         auto source_length = source->get_length();
@@ -783,7 +675,7 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIO, T> {
     }
 
     template <bool copy_delta>
-    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<T, 4> *source) {
+    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<value_type, 4> *source) {
         assert(destination->parent->layout == layout);
 
         auto destination_length = destination->get_length();
@@ -830,7 +722,7 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIO, T> {
     }
 
     template <bool copy_delta>
-    static void copy(nn_device_internal *device, nn::data<T, 4> *destination, const nn::workload_data<T> *source) {
+    static void copy(nn_device_internal *device, nn::data<value_type, 4> *destination, const nn::workload_data<T> *source) {
         assert(source->parent->layout == layout);
 
         auto source_length = source->get_length();
@@ -876,14 +768,23 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIO, T> {
         return new nn::workload_data<T>(NN_WORKLOAD_DATA_TAG_OBLOCKIO, size, layout, false, allocate_delta);
     }
 };
+
+template<typename T> inline nn_workload_data_layout_t &data_helper_layout_lookup_pzxyqn();
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_pzxyqn<float>()                     { return nn::layout_t<nn::layout_pzxyqn_f32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_pzxyqn<nn::layout_pzxyqn_f32>()     { return nn::layout_t<nn::layout_pzxyqn_f32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_pzxyqn<nn::layout_oblockixyo_f32>() { return nn::layout_t<nn::layout_pzxyqn_f32>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_pzxyqn<nn::layout_oblockio_f32>()   { return nn::layout_t<nn::layout_pzxyqn_f32>::layout; }
+
 template <typename T>
-const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIO, T>::layout = nn::workload_data<T>::layout.pzxyqn;
+const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIO, T>::layout = data_helper_layout_lookup_pzxyqn<T>();
 
 template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIXYO, T> {
     static const nn_workload_data_layout_t &layout;
 
+    using value_type = typename nn::workload_data<T>::item_type;
+
     template <bool copy_delta>
-    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<T, 4> *source) {
+    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<value_type, 4> *source) {
         assert(destination->parent->layout==layout);
 
         auto destination_length = destination->get_length();
@@ -939,7 +840,7 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIXYO, T> {
     }
 
     template <bool copy_delta>
-    static void copy(nn_device_internal *device, nn::data<T, 4> *destination, const nn::workload_data<T> *source) {
+    static void copy(nn_device_internal *device, nn::data<value_type, 4> *destination, const nn::workload_data<T> *source) {
         assert(source->parent->layout == layout);
 
         auto source_length = source->get_length();
@@ -988,18 +889,21 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIXYO, T> {
         return new nn::workload_data<T>(NN_WORKLOAD_DATA_TAG_OBLOCKIXYO, size, layout, false, allocate_delta);
     }
 };
+
 template <typename T>
-const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIXYO, T>::layout = nn::workload_data<T>::layout.pzxyqn;
+const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIXYO, T>::layout = data_helper_layout_lookup_pzxyqn<T>();
 
 template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_O, T> {
     static const nn_workload_data_layout_t &layout;
 
+    using value_type = typename nn::workload_data<T>::item_type;
+
     template <bool copy_delta>
-    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<T, 1> *source) {
+    static void copy(nn_device_internal *device, nn::workload_data<T> *destination, const nn::data<value_type, 1> *source) {
         assert(destination->parent->layout == layout);
 
         auto destination_length = destination->get_length();
-        assert(destination->parent->buffer_size / sizeof(T) == source->count()); // no support for views
+        assert(destination->parent->buffer_size / sizeof(value_type) == source->count()); // no support for views
 
         const auto o_size = source->size[0]; // number of output feature maps / filters
 
@@ -1014,11 +918,11 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_O, T> {
     }
 
     template <bool copy_delta>
-    static void copy(nn_device_internal *device, nn::data<T, 1> *destination, const nn::workload_data<T> *source) {
+    static void copy(nn_device_internal *device, nn::data<value_type, 1> *destination, const nn::workload_data<T> *source) {
         assert(source->parent->layout == layout);
 
         auto source_length = source->get_length();
-        assert(source->parent->buffer_size / sizeof(T) == destination->count()); // no support for views
+        assert(source->parent->buffer_size / sizeof(value_type) == destination->count()); // no support for views
 
         const auto o_size = destination->size[0]; // number of output feature maps / filters
 
@@ -1037,7 +941,7 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_O, T> {
     }
 };
 template <typename T>
-const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_O, T>::layout = nn::workload_data<T>::layout.nxyzpq;
+const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_O, T>::layout = data_helper_layout_lookup_nxyzpq<T>();
 
 template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_I2O32IXYO, T> {
     static const nn_workload_data_layout_t &layout;
@@ -1087,8 +991,12 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_I2O32IXYO, T> {
         return new nn::workload_data<T>(NN_WORKLOAD_DATA_TAG_I2O32IXYO, size, layout);
     }
 };
+
+template<typename T> inline nn_workload_data_layout_t &data_helper_layout_lookup_ypznxq();
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_ypznxq<int16_t>() { return nn::layout_t<nn::layout_ypznxq_i16>::layout; }
+
 template <typename T>
-const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_I2O32IXYO, T>::layout = nn::workload_data<T>::layout.ypznxq;
+const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_I2O32IXYO, T>::layout = data_helper_layout_lookup_ypznxq<T>();
 
 template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_I2O8IO, T> {
     static const nn_workload_data_layout_t &layout;
@@ -1152,6 +1060,108 @@ template <typename T> struct data_helper<NN_WORKLOAD_DATA_TAG_I2O8IO, T> {
         return new nn::workload_data<T>(NN_WORKLOAD_DATA_TAG_I2O8IO, size, layout);
     }
 };
+
+template<typename T> inline nn_workload_data_layout_t &data_helper_layout_lookup_xzynpq();
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_xzynpq<int16_t>() { return nn::layout_t<nn::layout_xzynpq_i16>::layout; }
+template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_xzynpq<int32_t>() { return nn::layout_t<nn::layout_xzynpq_i32>::layout; }
+
 template <typename T>
-const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_I2O8IO, T>::layout = nn::workload_data<T>::layout.xzynpq;
-}
+const nn_workload_data_layout_t &data_helper<NN_WORKLOAD_DATA_TAG_I2O8IO, T>::layout = data_helper_layout_lookup_xzynpq<T>();
+
+template <typename T>
+struct data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIOXY, T> {
+    static const nn_workload_data_layout_t& layout;
+
+    using value_type = typename nn::workload_data<T>::item_type;
+
+    template <bool copy_delta>
+    static void copy(nn_device_internal *device,
+                     nn::workload_data<T> *destination,
+                     const nn::data<value_type, 4> *source)
+    {
+
+        assert(destination->parent->layout==layout);
+
+        auto destination_length = destination->get_length();
+
+        // no support for views
+        assert(destination_length.t[NN_DATA_COORD_n] == destination->parent->lengths.t[NN_DATA_COORD_n]);
+        assert(destination_length.t[NN_DATA_COORD_x] == destination->parent->lengths.t[NN_DATA_COORD_x]);
+        assert(destination_length.t[NN_DATA_COORD_y] == destination->parent->lengths.t[NN_DATA_COORD_y]);
+        assert(destination_length.t[NN_DATA_COORD_z] == destination->parent->lengths.t[NN_DATA_COORD_z]);
+        assert(destination_length.t[NN_DATA_COORD_p] == destination->parent->lengths.t[NN_DATA_COORD_p]);
+        assert(destination_length.t[NN_DATA_COORD_q] == destination->parent->lengths.t[NN_DATA_COORD_q]);
+
+        const auto o_size = source->size[3], // number of output feature maps / filters
+            x_size = source->size[0],        // kernel width
+            y_size = source->size[1],        // kernel height
+            i_size = source->size[2];        // number of input feature maps
+        const auto block_size = destination->parent->lengths.t[NN_DATA_COORD_p];
+        const auto block_count = (o_size - 1) / block_size + 1;
+
+        assert(destination_length.t[NN_DATA_COORD_x] == x_size);
+        assert(destination_length.t[NN_DATA_COORD_y] == y_size);
+        assert(destination_length.t[NN_DATA_COORD_z] == i_size);
+        assert(destination_length.t[NN_DATA_COORD_q] == block_count);
+
+        auto src = static_cast<float *>(source->buffer);
+        auto dst = static_cast<float *>(copy_delta ? destination->parent->delta_buffer : destination->parent->data_buffer);
+        for (size_t y = 0u; y < y_size; ++y)
+            for (size_t x = 0u; x < x_size; ++x)
+                for (size_t q = 0u; q < block_count; ++q)
+                    for (size_t i = 0u; i < i_size; ++i)
+                        for (size_t p = 0u; p < block_size; ++p)
+                            *(dst++) = src[x + x_size * (y + y_size * (i + i_size * (q * block_size + p)))];
+    }
+
+    static nn::workload_data<T> *create(uint32_t width,
+                                        uint32_t height,
+                                        uint32_t in_feats,
+                                        uint32_t out_feats,
+                                        uint32_t out_feats_block_size,
+                                        bool = false) {
+        uint32_t out_feats_blocks = (out_feats + out_feats_block_size - 1) / out_feats_block_size;
+        return new nn::workload_data<T>(
+            NN_WORKLOAD_DATA_TAG_OBLOCKIOXY,
+            nn_workload_data_coords_t(1, width, height, in_feats, out_feats_block_size, out_feats_blocks),
+            layout);
+    }
+};
+
+template <typename T>
+const nn_workload_data_layout_t& data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIOXY, T>::layout = nn::layout_t<nn::layout_oblockioxy_f32>::layout;
+
+template <typename T>
+struct data_helper<NN_WORKLOAD_DATA_TAG_NBLOCKZXYN, T> {
+    static const nn_workload_data_layout_t& layout;
+
+    using value_type = typename nn::workload_data<T>::item_type;
+
+    template <bool copy_delta>
+    static void copy(nn_device_internal *device,
+                     nn::workload_data<T> *destination,
+                     const nn::data<value_type, 4> *source)
+    {
+        throw std::runtime_error("unimplemented");
+    }
+
+    static nn::workload_data<T> *create(uint32_t batch,
+                                        uint32_t width,
+                                        uint32_t height,
+                                        uint32_t in_feats,
+                                        uint32_t batch_block_size,
+                                        bool = false) {
+        uint32_t blocks = (batch + batch_block_size - 1) / batch_block_size;
+        return new nn::workload_data<T>(
+            NN_WORKLOAD_DATA_TAG_NBLOCKZXYN,
+            nn_workload_data_coords_t(blocks, width, height, in_feats, batch_block_size, 1),
+            layout);
+
+    }
+};
+
+template <typename T>
+const nn_workload_data_layout_t& data_helper<NN_WORKLOAD_DATA_TAG_NBLOCKZXYN, T>::layout = nn::layout_t<nn::layout_nblockzxyn_f32> ::layout;
+
+} //namespace nn
+

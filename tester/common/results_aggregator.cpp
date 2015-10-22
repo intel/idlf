@@ -54,7 +54,7 @@ void results_aggregator::save_results( std::string filename ) {
 
     output_file.open( filename, std::ios::out | std::ios::trunc );
     if( output_file.is_open() ) {
-        // TODO: Develop a function to retrieve information about the machine
+
         std::string  machine_description = collect_machine_info();
 
         output_file

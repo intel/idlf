@@ -30,6 +30,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "device/cpu/api_internal/nn_device_interface_0_internal.h"
 #include "device/api/nn_primitives_api_0.h"
 #include "helper_zxyn_f32.h"
+#include "convolution_jit.h"
 
 namespace layer {
 
@@ -61,31 +62,36 @@ class convolution_f32 : public helper_zxyn_f32::primitive_zxyn_f32_base {
 
     virtual bool validate_input(size_t index, nn_workload_data_t *data) override;
 
-    virtual void forward(const std::vector<const nn_workload_data_t *> &inputs,
+    void forward(const std::vector<const nn_workload_data_t *> &inputs,
+                 const std::vector<const nn_workload_data_t *> &parameters,
+                 const std::vector<nn_workload_data_t *> &outputs) override;
+
+    void prepare_forward(const std::vector<const nn_workload_data_t *> &inputs,
                          const std::vector<const nn_workload_data_t *> &parameters,
                          const std::vector<nn_workload_data_t *> &outputs) override;
 
-    virtual void backward(const nn::workload_data<float> *forward_input_buffer,
-                          const nn::workload_data<float> *forward_weights_buffer,
-                          const nn::workload_data<float> *forward_output_buffer,
-                          const nn::workload_data<float> *backward_input_buffer,
-                          nn::workload_data<float> *backward_output_buffer,
-                          nn::workload_data<float> *backward_weights_delta_buffer,
-                          nn::workload_data<float> *backward_bias_delta_buffer);
+    virtual void backward(const nn::workload_data<> *forward_input_buffer,
+                          const nn::workload_data<> *forward_weights_buffer,
+                          const nn::workload_data<> *forward_output_buffer,
+                          const nn::workload_data<> *backward_input_buffer,
+                          nn::workload_data<> *backward_output_buffer,
+                          nn::workload_data<> *backward_weights_delta_buffer,
+                          nn::workload_data<> *backward_bias_delta_buffer,
+                          bool compute_sensitives);
 
     virtual void backward_weights_delta(
-                          const nn::workload_data<float> *forward_input_view,
-                          const nn::workload_data<float> *backward_input_view,
-                          nn::workload_data<float> *backward_weights_delta_view);
+                          const nn::workload_data<> *forward_input_view,
+                          const nn::workload_data<> *backward_input_view,
+                          nn::workload_data<> *backward_weights_delta_view);
 
     virtual void backward_bias_delta(
-                               const nn::workload_data<float> *backward_input_view,
-                               nn::workload_data<float> *backward_bias_delta_view);
+                               const nn::workload_data<> *backward_input_view,
+                               nn::workload_data<> *backward_bias_delta_view);
 
     virtual void backward_input_delta(
-                               const nn::workload_data<float> *forward_weights_view,
-                               const nn::workload_data<float> *backward_input_view,
-                               nn::workload_data<float> *backward_output_view);
+                               const nn::workload_data<> *forward_weights_view,
+                               const nn::workload_data<> *backward_input_view,
+                               nn::workload_data<> *backward_output_view);
     void backward(const std::vector<nn_workload_data_t *> &inputs,
                   const std::vector<const nn_workload_data_t *> &parameters,
                   const std::vector<const nn_workload_data_t *> &outputs) override;
@@ -94,15 +100,27 @@ class convolution_f32 : public helper_zxyn_f32::primitive_zxyn_f32_base {
                             const std::vector<const nn_workload_data_t *> &inputs,
                             const std::vector<nn_workload_data_t *> &parameters,
                             const std::vector<const nn_workload_data_t *> &outputs) override;
-    
+
     // order of weights coordinates is kernel_width, kernel_height, number of input channels, number of filters
 
+    bool uses_data_only() const {
+        return output_padding_left + output_padding_right
+            + output_padding_top + output_padding_bottom == 0;
+    }
+
+    void update_bias_by_linear_factors(
+        std::vector<float> arithmetic_params,
+        const std::vector<const nn_workload_data_t *> &parameters) const;
 
   protected:
-    virtual void forward(const nn::workload_data<float> *input_buffer,
-                         const nn::workload_data<float> *weights_buffer,
-                         const nn::workload_data<float> *bias_buffer,
-                         nn::workload_data<float> *output_buffer);
+    virtual void forward(const nn::workload_data<> *input_buffer,
+                         const nn::workload_data<> *weights_buffer,
+                         const nn::workload_data<> *bias_buffer,
+                         nn::workload_data<> *output_buffer);
+    virtual void prepare_forward(const nn::workload_data<> *input_buffer,
+                                 const nn::workload_data<> *weights_buffer,
+                                 const nn::workload_data<> *bias_buffer,
+                                 nn::workload_data<> *output_buffer);
 
     virtual size_t get_required_input_w() override;
     virtual size_t get_required_input_h() override;
@@ -115,6 +133,9 @@ class convolution_f32 : public helper_zxyn_f32::primitive_zxyn_f32_base {
     const size_t stride_x;
     const size_t stride_y;
     const nn_argument_activation_t activation;
+
+    std::shared_ptr<jit_convolution> compiled;
+    std::tuple<float*, float*, float*, float*> prepared_for;
 };
 
 void run_multithreaded_convolve_work_item_backward(nn_workload_item *const work_item);

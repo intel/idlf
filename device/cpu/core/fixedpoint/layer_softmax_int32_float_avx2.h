@@ -44,7 +44,7 @@ namespace int16_fixedpoint {
 
         virtual ~softmax_i32() {}
 
-        void forward(const nn::workload_data<int32_t> *input, nn::workload_data<float> *output);
+        void forward(const nn::workload_data<int32_t> *input, nn::workload_data<> *output);
 
         virtual void forward(const std::vector<const nn_workload_data_t *> &inputs, const std::vector<const nn_workload_data_t *> &parameters, const std::vector<nn_workload_data_t *> &outputs) override;
 
@@ -63,10 +63,10 @@ namespace int16_fixedpoint {
 
     private:
         void run_softmax_int32_float_work_item_batch8(const nn::workload_data<int32_t> *input_view,
-            nn::workload_data<float> *output_view);
+            nn::workload_data<> *output_view);
         void run_softmax_int32_float_work_item_batch8x(const nn::workload_data<int32_t> *input_view,
-            nn::workload_data<float> *output_view, uint16_t NoBatch8);
+            nn::workload_data<> *output_view, uint16_t NoBatch8);
         void run_softmax_int32_float_work_item_latency(const nn::workload_data<int32_t> *input_view,
-            nn::workload_data<float> *output_view);
+            nn::workload_data<> *output_view);
     };
 } //namespace device_int16

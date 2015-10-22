@@ -29,12 +29,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cmath>
 #include <algorithm>
 #include <random>
+#include <memory>
 #include "gtest/gtest.h"
 
 #include "device/common/nn_workload_data.h"
 #include "device/cpu/core/layer_dropout.h"
 #include "device/cpu/api_internal/nn_device_interface_0_internal.h"
 
+#include "device/api/nn_primitives_api_0.h"
 
 namespace
 {
@@ -141,7 +143,7 @@ namespace
     nn_workload_item_t* get_forward(
         nn_workload_t* workload)
     {
-        nn_workload_opaque_t* workload_opaque = reinterpret_cast<nn_workload_opaque_t*>(workload + 1);
+        nn_workload_opaque_t* workload_opaque = static_cast<nn_workload_opaque_t*>(workload);
         nn_workload_item_t *workload_backprop = workload_opaque->order_of_execution.back();
         assert(workload_backprop->type == NN_WORK_ITEM_TYPE_DROPOUT);
 
@@ -160,8 +162,8 @@ namespace
         nn_workload_data_t* data_item,
         nn_workload_data_t* data_item_ref)
     {
-        nn::workload_data<float> data(data_item->parent->data_buffer, data_item->parent->lengths, data_item->parent->layout);
-        nn::workload_data<float> reference(data_item_ref->parent->data_buffer, data_item_ref->parent->lengths, data_item_ref->parent->layout);
+        nn::workload_data<nn::layout_f32> data(data_item->parent->data_buffer, data_item->parent->lengths, data_item->parent->layout);
+        nn::workload_data<nn::layout_f32> reference(data_item_ref->parent->data_buffer, data_item_ref->parent->lengths, data_item_ref->parent->layout);
         auto& size = data_item->parent->lengths;
         for (auto n = 0u; n < size.t[0]; ++n)
             for (auto x = 0u; x < size.t[1]; ++x)
@@ -240,7 +242,7 @@ namespace
         auto forward_output = dropout_forward->output[0];
 
         // Create reference outputs with same layout and sizes.
-        nn::workload_data<float> ref_forward_output(forward_output->parent->lengths, forward_output->parent->layout);
+        nn::workload_data<> ref_forward_output(forward_output->parent->lengths, forward_output->parent->layout);
 
         std::memset(ref_forward_output.parent->data_buffer, 0, ref_forward_output.parent->buffer_size);
 
@@ -248,14 +250,21 @@ namespace
         NN_API_STATUS status;
         EXPECT_EQ(NN_API_STATUS_OK, di.workload_execute_function(workload, (void **)input_datas, nullptr, &status));
 
-        // Run naive code.
-        forward_data_input->parent->data_buffer = reinterpret_cast<nn::data<int32_t>**>(input_datas)[0]->buffer;
+        // Create data for naive run.
+        nn::workload_data<> naive_forward_input(
+            reinterpret_cast<nn::data<int32_t>**>(input_datas)[0]->buffer, 
+            forward_data_input->parent->lengths, 
+            forward_data_input->parent->layout);
 
-        // Check forward pass of classification.
+        naive_forward_input.view_begin = forward_data_input->view_begin;
+        naive_forward_input.view_end = forward_data_input->view_end;
+
+        // Run naive code.
         naive(
-            forward_data_input,
+            &naive_forward_input,
             &ref_forward_output);
 
+        // Check forward pass of classification.
         if (negative)
         {
             // Random error for each buffer.
@@ -279,8 +288,123 @@ namespace
         delete reinterpret_cast<nn::data<int32_t>**>(input_datas)[1];
         delete reinterpret_cast<nn::data<int32_t>**>(input_datas)[2];
     }
-}
 
+    void run_primitiv_test(
+        uint32_t input_fmaps,
+        uint32_t batch,
+        int32_t seed)
+    {
+        nn_device_primitives_description_t device_primitives_description;
+        nn_device_get_primitives_description(&device_primitives_description);
+        assert(device_primitives_description.version_first <= 0);
+        assert(device_primitives_description.version_last >= 0);
+
+        nn_primitives_0_t primitives;
+        nn_device_get_primitives(0, &primitives);
+        nn_device_t *device = primitives.create_device_with_thread_count(0, nullptr);
+
+        nn_primitive_handle_t primitive = primitives.create_handle.dropout_f32(
+          device,
+          1, 1, input_fmaps, batch , 0.5f, nullptr);
+
+        // 1. Set up Inputs
+        std::unique_ptr<nn::data<float, 2>> input_data( new nn::data<float, 2>(input_fmaps, batch));
+
+        std::uniform_real_distribution< float > rand_val( -300.0f, 300.0f );
+        std::minstd_rand0 prd (1);
+        
+        // 1.1 Input data
+        for (int i = 0; i < input_data->count(); ++i)
+        {
+            ((float *)(input_data->buffer))[i] = rand_val( prd );
+        }
+
+        // 1.2 input seed
+        std::unique_ptr<nn::data<int32_t>> input_seed( new nn::data<int32_t>(1));
+        *((int32_t*)(input_seed->buffer)) = seed;
+        
+        // 1.3 input if_train
+        std::unique_ptr<nn::data<int32_t>> input_if_train( new nn::data<int32_t>(1));
+        *((int32_t*)(input_if_train->buffer)) = 0;   // Forward pass, no train
+
+        // reference output buffer
+        nn::data<float, 2> output_ref(input_fmaps, batch);
+
+        // output buffer
+        nn::data<float, 2> output(input_fmaps, batch);
+
+        // prepare buffers (internal/nn_workload_data buffers)
+        nn_opaque_data_t* input_internal[3];
+        nn_opaque_data_t* output_internal;
+        primitives.create_inputs(primitive, 3, input_internal, 0, nullptr);
+
+        nn_event_t input_ready_0 = primitives.copy_to_opaque_async(device, input_internal[0], input_data.get(), 0, nullptr, nullptr);
+        nn_event_t input_ready_1 = primitives.copy_to_opaque_async(device, input_internal[1], input_seed.get(), 0, nullptr, nullptr);
+        nn_event_t input_ready_2 = primitives.copy_to_opaque_async(device, input_internal[2], input_if_train.get(), 0, nullptr, nullptr);
+
+        nn_event_t copy_inputs_done[3];
+        copy_inputs_done[0] = input_ready_0;
+        copy_inputs_done[1] = input_ready_1;
+        copy_inputs_done[2] = input_ready_2;
+
+        primitives.create_outputs(primitive, 1, &output_internal, 0, nullptr);
+
+        auto naive_dropout = [](nn::data<float, 2> &output, nn::data<float, 2> &input)
+        {
+            // IDLF implementation is just copying input to output
+            // according to dropout paper
+            // http://www.cs.toronto.edu/~hinton/absps/JMLRdropout.pdf
+            // At testing/validation stage dropout is scaling weights of
+            // layer (where dropout is situated) using droput rate
+            // But in IDLF we scaled inputs by 1/dropout rate at training 
+            // so we do not have to touch weights at testing time. Both 
+            // approaches are equal
+            assert(input.count() == output.count() );
+            for(unsigned int i=0; i < input.count(); ++i)    
+            {
+                ((float*)output.buffer)[i]  = ((float*)input.buffer)[i];
+            }
+        };   
+        
+        // Run Naive dropout 
+        naive_dropout(output_ref, *(input_data.get())); 
+  
+        // Call droput forward
+        nn_event_t dropout = primitives.forward_async(
+            primitive, 3, input_internal, 0, nullptr, 1, &output_internal, 1, copy_inputs_done, nullptr);
+
+        // Get output
+        nn_event_t output_ready = primitives.copy_from_opaque_async(device, &output, output_internal, 1, &dropout, nullptr);
+        primitives.wait(1, &output_ready);
+
+        // Compare results     
+        auto compare_results = [](nn::data<float, 2> &buf_1, nn::data<float, 2> &buf_2) -> bool
+        {
+            assert(buf_2.count() == buf_1.count() );
+            bool result = true;
+            for(unsigned int i=0; i < buf_2.count(); ++i)    
+            {
+                result = result && (((float*)buf_1.buffer)[i]  == ((float*)buf_2.buffer)[i]);
+            }
+            return result;                                    
+        };
+
+        EXPECT_EQ(true, compare_results(output, output_ref));
+
+        // Cleanup
+        primitives.delete_event(output_ready);
+        primitives.delete_event(input_ready_0);
+        primitives.delete_event(input_ready_1);
+        primitives.delete_event(input_ready_2);
+        primitives.delete_event(dropout);
+        primitives.delete_opaque_data(input_internal[0]);
+        primitives.delete_opaque_data(input_internal[1]);
+        primitives.delete_opaque_data(input_internal[2]);
+        primitives.delete_opaque_data(output_internal);
+        primitives.delete_primitive(primitive);
+        primitives.delete_device(device);
+    }
+}
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Tests.
 TEST(cpu_dropout_classification, standard_square_positive)
@@ -296,6 +420,9 @@ TEST(cpu_dropout_classification, standard_square_negative)
     for (auto batch : { 1, 8, 48 })
         for (auto in_z = 1; in_z < 35; ++in_z)
             for (auto seed : { 1, 10, 50 } )
+            {
                 run_test(in_z, batch, seed, true);
+                run_primitiv_test(in_z, batch, seed);
+            }
 }
 

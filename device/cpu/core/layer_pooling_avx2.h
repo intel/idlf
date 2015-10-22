@@ -45,6 +45,8 @@ class pooling_f32 : public helper_zxyn_f32::primitive_zxyn_f32_base {
                 size_t num_feature_maps,
                 size_t output_w,
                 size_t output_h,
+                const int32_t center_offset_x,
+                const int32_t center_offset_y,
                 size_t batch_size,
                 size_t output_padding_left,
                 size_t output_padding_right,
@@ -55,24 +57,28 @@ class pooling_f32 : public helper_zxyn_f32::primitive_zxyn_f32_base {
     virtual ~pooling_f32() {}
 
     virtual void backward(
-        const nn::workload_data<float> *forward_input,
-        const nn::workload_data<float> *forward_output,
-        const nn::workload_data<float> *backward_input,
-        nn::workload_data<float> *backward_output);
+        const nn::workload_data<> *forward_input,
+        const nn::workload_data<> *forward_intermediate,
+        const nn::workload_data<> *forward_output,
+        const nn::workload_data<> *backward_input,
+        nn::workload_data<> *backward_output);
 
     void run_backward_delta(
-        const nn::workload_data<float> *forward_input,
-        const nn::workload_data<float> *forward_output,
-        const nn::workload_data<float> *backward_input,
-        nn::workload_data<float> *backward_output);
+        const nn::workload_data<> *forward_input,
+        const nn::workload_data<> *forward_intermediate,
+        const nn::workload_data<> *forward_output,
+        const nn::workload_data<> *backward_input,
+        nn::workload_data<> *backward_output);
 
     void backward(const std::vector<nn_workload_data_t *> &inputs,
                   const std::vector<const nn_workload_data_t *> &parameters,
                   const std::vector<const nn_workload_data_t *> &outputs) override;
 
+    virtual std::vector<nn_workload_data_t *> create_outputs(bool allocate_delta = false) override;
+
   private:
-      void run_pooling(const nn::workload_data<float> *input_view, nn::workload_data<float> *output_view);
-      void forward(const nn::workload_data<float> *input, nn::workload_data<float> *output);
+      void run_pooling(const nn::workload_data<> *input_view, nn::workload_data<> *intermediate_output_view, nn::workload_data<> *output_view);
+      void forward(const nn::workload_data<> *input, nn::workload_data<> *intermediate_output, nn::workload_data<> *output);
 
       virtual void forward(const std::vector<const nn_workload_data_t *> &inputs, const std::vector<const nn_workload_data_t *> &parameters, const std::vector<nn_workload_data_t *> &outputs) override;
 
@@ -84,6 +90,8 @@ protected:
     const size_t pool_size_y;
     const size_t pool_stride_x;
     const size_t pool_stride_y;
+    const uint32_t center_offset_x;
+    const uint32_t center_offset_y;
     const NN_POOLING_MODE pooling_mode;
 
     friend void unpack_pooling_callback_handle(void *void_handle);

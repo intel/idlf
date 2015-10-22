@@ -28,6 +28,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "workflow_builder.h"
 #include "common/nn_data_tools.h"
 
+static NN_WORKLOAD_DATA_TYPE in_formats[] =
+        { NN_WORKLOAD_DATA_TYPE_F32_ZXY_BATCH };
+
+static NN_WORKLOAD_DATA_TYPE out_formats[] =
+        { NN_WORKLOAD_DATA_TYPE_F32_1D_BATCH };
+
 enum  workflow_layers {
     input,
     mean_substract,
@@ -100,6 +106,9 @@ public:
     }
 
     bool is_valid() { return error_.empty(); }
+
+    virtual NN_WORKLOAD_DATA_TYPE* get_input_formats() {return in_formats;}
+    virtual NN_WORKLOAD_DATA_TYPE* get_output_formats() {return out_formats;}
 
 private:
     std::string error_;
@@ -200,29 +209,29 @@ public:
         };
 
         try {
-            mean_factor = load_biases_or_weights("weights_caffenet/imagenet_mean.nnd");
-            workflow_layer_weights_float[conv1_factor] = load_biases_or_weights("weights_caffenet/conv1.nnd");
-            workflow_layer_biases_float[conv1_factor] = load_biases_or_weights("weights_caffenet/conv1_bias.nnd");
-            workflow_layer_weights_float[conv2_1_factor] = load_biases_or_weights("weights_caffenet/conv2_g1.nnd");
-            workflow_layer_biases_float[conv2_1_factor] = load_biases_or_weights("weights_caffenet/conv2_bias_g1.nnd");
-            workflow_layer_weights_float[conv2_2_factor] = load_biases_or_weights("weights_caffenet/conv2_g2.nnd");
-            workflow_layer_biases_float[conv2_2_factor] = load_biases_or_weights("weights_caffenet/conv2_bias_g2.nnd");
-            workflow_layer_weights_float[conv3_factor] = load_biases_or_weights("weights_caffenet/conv3.nnd");
-            workflow_layer_biases_float[conv3_factor] = load_biases_or_weights("weights_caffenet/conv3_bias.nnd");
-            workflow_layer_weights_float[conv4_1_factor] = load_biases_or_weights("weights_caffenet/conv4_g1.nnd");
-            workflow_layer_biases_float[conv4_1_factor] = load_biases_or_weights("weights_caffenet/conv4_bias_g1.nnd");
-            workflow_layer_weights_float[conv4_2_factor] = load_biases_or_weights("weights_caffenet/conv4_g2.nnd");
-            workflow_layer_biases_float[conv4_2_factor] = load_biases_or_weights("weights_caffenet/conv4_bias_g2.nnd");
-            workflow_layer_weights_float[conv5_1_factor] = load_biases_or_weights("weights_caffenet/conv5_g1.nnd");
-            workflow_layer_biases_float[conv5_1_factor] = load_biases_or_weights("weights_caffenet/conv5_bias_g1.nnd");
-            workflow_layer_weights_float[conv5_2_factor] = load_biases_or_weights("weights_caffenet/conv5_g2.nnd");
-            workflow_layer_biases_float[conv5_2_factor] = load_biases_or_weights("weights_caffenet/conv5_bias_g2.nnd");
-            workflow_layer_weights_float[fc6_factor] = load_biases_or_weights("weights_caffenet/fc6.nnd");
-            workflow_layer_biases_float[fc6_factor] = load_biases_or_weights("weights_caffenet/fc6_bias.nnd");
-            workflow_layer_weights_float[fc7_factor] = load_biases_or_weights("weights_caffenet/fc7.nnd");
-            workflow_layer_biases_float[fc7_factor] = load_biases_or_weights("weights_caffenet/fc7_bias.nnd");
-            workflow_layer_weights_float[fc8_factor] = load_biases_or_weights("weights_caffenet/fc8.nnd");
-            workflow_layer_biases_float[fc8_factor] = load_biases_or_weights("weights_caffenet/fc8_bias.nnd");
+            mean_factor                                     = load_biases_or_weights("weights_caffenet/imagenet_mean.nnd");
+            workflow_layer_weights_float[conv1_factor]      = load_biases_or_weights("weights_caffenet/conv1_weights.nnd");
+            workflow_layer_biases_float[conv1_factor]       = load_biases_or_weights("weights_caffenet/conv1_biases.nnd");
+            workflow_layer_weights_float[conv2_1_factor]    = load_biases_or_weights("weights_caffenet/conv2_g1_weights.nnd");
+            workflow_layer_biases_float[conv2_1_factor]     = load_biases_or_weights("weights_caffenet/conv2_g1_biases.nnd");
+            workflow_layer_weights_float[conv2_2_factor]    = load_biases_or_weights("weights_caffenet/conv2_g2_weights.nnd");
+            workflow_layer_biases_float[conv2_2_factor]     = load_biases_or_weights("weights_caffenet/conv2_g2_biases.nnd");
+            workflow_layer_weights_float[conv3_factor]      = load_biases_or_weights("weights_caffenet/conv3_weights.nnd");
+            workflow_layer_biases_float[conv3_factor]       = load_biases_or_weights("weights_caffenet/conv3_biases.nnd");
+            workflow_layer_weights_float[conv4_1_factor]    = load_biases_or_weights("weights_caffenet/conv4_g1_weights.nnd");
+            workflow_layer_biases_float[conv4_1_factor]     = load_biases_or_weights("weights_caffenet/conv4_g1_biases.nnd");
+            workflow_layer_weights_float[conv4_2_factor]    = load_biases_or_weights("weights_caffenet/conv4_g2_weights.nnd");
+            workflow_layer_biases_float[conv4_2_factor]     = load_biases_or_weights("weights_caffenet/conv4_g2_biases.nnd");
+            workflow_layer_weights_float[conv5_1_factor]    = load_biases_or_weights("weights_caffenet/conv5_g1_weights.nnd");
+            workflow_layer_biases_float[conv5_1_factor]     = load_biases_or_weights("weights_caffenet/conv5_g1_biases.nnd");
+            workflow_layer_weights_float[conv5_2_factor]    = load_biases_or_weights("weights_caffenet/conv5_g2_weights.nnd");
+            workflow_layer_biases_float[conv5_2_factor]     = load_biases_or_weights("weights_caffenet/conv5_g2_biases.nnd");
+            workflow_layer_weights_float[fc6_factor]        = load_biases_or_weights("weights_caffenet/fc6_weights.nnd");
+            workflow_layer_biases_float[fc6_factor]         = load_biases_or_weights("weights_caffenet/fc6_biases.nnd");
+            workflow_layer_weights_float[fc7_factor]        = load_biases_or_weights("weights_caffenet/fc7_weights.nnd");
+            workflow_layer_biases_float[fc7_factor]         = load_biases_or_weights("weights_caffenet/fc7_biases.nnd");
+            workflow_layer_weights_float[fc8_factor]        = load_biases_or_weights("weights_caffenet/fc8_weights.nnd");
+            workflow_layer_biases_float[fc8_factor]         = load_biases_or_weights("weights_caffenet/fc8_biases.nnd");
         }
         catch (...) {
             return workflow;

@@ -28,18 +28,24 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "device/common/nn_workload_data.h"
 #include "device/cpu/api_internal/nn_device_interface_0_internal.h"
 #include "layer_convert_data_layout.h"
+#include "layer_convert_data_to_batch_block_layout.h"
+#include "layer_convert_data_from_batch_block_layout.h"
 #include "device/cpu/api_internal/data_helper.h"
 
+namespace
+{
 uint32_t C_simd_size = sizeof(__m256) / sizeof(float);
+} //namespace
 
-namespace layer{
+namespace layer
+{
 
     template<
         bool T_fully_optimized,
         uint32_t T_batch = 0,
         uint32_t T_image_size = 0>
     void batching_conversion(
-        const nn_workload_data_t* input_view, 
+        const nn_workload_data_t* input_view,
         nn_workload_data_t* output_view)
     {
         if (T_fully_optimized)
@@ -173,9 +179,9 @@ namespace layer{
             if(input_squashed_x_length != output_squashed_x_length)
                 throw std::runtime_error("batching conversion: different data sizes");
 
-            if((input_view->parent->layout == nn::layout_t<float>::nzxypq && output_view->parent->layout == nn::layout_t<float>::zxynpq) || // N-ZXY -> ZXY-N
-               (input_view->parent->layout == nn::layout_t<float>::nxyzpq && output_view->parent->layout == nn::layout_t<float>::zxynpq) || // N-X   -> ZXY-N
-               (input_view->parent->layout == nn::layout_t<float>::nxyzpq && output_view->parent->layout == nn::layout_t<float>::xyzpqn))   // N-XYZ -> XYZ-N
+            if((input_view->parent->layout == nn::layout_t<nn::layout_nzxypq_f32>::layout && output_view->parent->layout == nn::layout_t<nn::layout_zxynpq_f32>::layout) || // N-ZXY -> ZXY-N
+               (input_view->parent->layout == nn::layout_t<nn::layout_nxyzpq_f32>::layout && output_view->parent->layout == nn::layout_t<nn::layout_zxynpq_f32>::layout) || // N-X   -> ZXY-N
+               (input_view->parent->layout == nn::layout_t<nn::layout_nxyzpq_f32>::layout && output_view->parent->layout == nn::layout_t<nn::layout_xyzpqn_f32>::layout))   // N-XYZ -> XYZ-N
             {
                 // N.. to ..N
                 const auto load_data_stride = T_batch;
@@ -188,9 +194,9 @@ namespace layer{
                         *(output_buffer + n * store_data_stride + x) = *(input_buffer + x * load_data_stride + n);
                 }
             }
-            else if((input_view->parent->layout == nn::layout_t<float>::zxynpq && output_view->parent->layout == nn::layout_t<float>::nzxypq) || // ZXY-N -> N-ZXY
-                    (input_view->parent->layout == nn::layout_t<float>::zxynpq && output_view->parent->layout == nn::layout_t<float>::nxyzpq) || // ZXY-N -> N-X
-                    (input_view->parent->layout == nn::layout_t<float>::xyzpqn && output_view->parent->layout == nn::layout_t<float>::nxyzpq))   // XYZ-N -> N-XYZ
+            else if((input_view->parent->layout == nn::layout_t<nn::layout_zxynpq_f32>::layout && output_view->parent->layout == nn::layout_t<nn::layout_nzxypq_f32>::layout) || // ZXY-N -> N-ZXY
+                    (input_view->parent->layout == nn::layout_t<nn::layout_zxynpq_f32>::layout && output_view->parent->layout == nn::layout_t<nn::layout_nxyzpq_f32>::layout) || // ZXY-N -> N-X
+                    (input_view->parent->layout == nn::layout_t<nn::layout_xyzpqn_f32>::layout && output_view->parent->layout == nn::layout_t<nn::layout_nxyzpq_f32>::layout))   // XYZ-N -> N-XYZ
             {
                 // ..N to N..
                 const auto load_data_stride = input_squashed_x_length;
@@ -250,10 +256,10 @@ namespace layer{
             const auto input_buffer = static_cast<int32_t *>(input_view->parent->data_buffer);
             auto output_buffer = static_cast<int32_t *>(output_view->parent->data_buffer);
 
-            for (auto itrBatch = 0; itrBatch < batchsize / 8; ++itrBatch)
-                for (auto itrSize = 0; itrSize < size; ++itrSize)
+            for (auto itrBatch = 0u; itrBatch < batchsize / 8; ++itrBatch)
+                for (auto itrSize = 0u; itrSize < size; ++itrSize)
                     for (auto itrBatch8 = 0; itrBatch8 < 8; ++itrBatch8)
-                        for (auto itrSize2 = 0; itrSize2 < size2; ++itrSize2)
+                        for (auto itrSize2 = 0u; itrSize2 < size2; ++itrSize2)
                             output_buffer[itrSize2 * 8 + itrBatch8 + itrSize * size2 * 8 +
                                           itrBatch * size * 8 * size2] =
                                 input_buffer[itrSize2 + itrBatch8 * size2 + itrSize * size2 * batchsize +
@@ -305,21 +311,37 @@ namespace layer{
         } break;
 
         case 4: // conv->fc in float batch8/48
+        case 7: // fc->conv in backward batch8/48
         {
             // It won't change anything if batch == 1.
             if(batchsize != 1)
             {
                 auto image_size = input_view->parent->lengths.t[NN_DATA_COORD_x] * input_view->parent->lengths.t[NN_DATA_COORD_y] * input_view->parent->lengths.t[NN_DATA_COORD_z];
 
-                if      (batchsize ==  8 && image_size ==  9216) batching_conversion< true,  8,  9216>(input_view, output_view);
-                else if (batchsize == 48 && image_size ==  9216) batching_conversion< true, 48,  9216>(input_view, output_view);
-                else if (batchsize ==  8 && image_size == 36864) batching_conversion< true,  8, 36864>(input_view, output_view);
-                else if (batchsize == 48 && image_size == 36864) batching_conversion< true, 48, 36864>(input_view, output_view);
-                else if (batchsize ==  8)                        batching_conversion<false,  8       >(input_view, output_view);
-                else if (batchsize == 32)                        batching_conversion<false, 32       >(input_view, output_view);
-                else if (batchsize == 48)                        batching_conversion<false, 48       >(input_view, output_view);
+                if      (batchsize ==  8 && image_size ==  9216 && type == 4) batching_conversion< true,  8,  9216>(input_view, output_view);
+                else if (batchsize == 48 && image_size ==  9216 && type == 4) batching_conversion< true, 48,  9216>(input_view, output_view);
+                else if (batchsize ==  8 && image_size == 36864 && type == 4) batching_conversion< true,  8, 36864>(input_view, output_view);
+                else if (batchsize == 48 && image_size == 36864 && type == 4) batching_conversion< true, 48, 36864>(input_view, output_view);
+                else if (batchsize ==  8)                                     batching_conversion<false,  8       >(input_view, output_view);
+                else if (batchsize == 32)                                     batching_conversion<false, 32       >(input_view, output_view);
+                else if (batchsize == 48)                                     batching_conversion<false, 48       >(input_view, output_view);
                 else
                     throw std::runtime_error("batch_conversion: unknown batch");
+            }
+            else
+            {
+                // It should be view-style mapping.
+                if(input_view->parent->data_buffer != output_view->parent->data_buffer)
+                {
+                    // It can be possible if INPUT is before conversion and its buffer changed. In such case
+                    // we'll copy data_buffer ptr. It's also only case that should allow going into this IF.
+                    if(work_item->input[0].item->type == NN_WORK_ITEM_TYPE_INPUT)
+                    {
+                        output_view->parent->data_buffer = input_view->parent->data_buffer;
+                    }
+                    else
+                        throw std::runtime_error("batch1_conversion: invalid view mapping");
+                }
             }
             break;
         }
@@ -328,18 +350,18 @@ namespace layer{
         {
             const auto input_data = static_cast<nn::workload_data<int16_t>*>(input_view);
             auto output_data = reinterpret_cast<nn::workload_data<int16_t>*>(output_view);
-            const size_t z_block = output_view->parent->lengths.t[NN_DATA_COORD_p];
+            const uint32_t z_block = static_cast<uint32_t>(output_view->parent->lengths.t[NN_DATA_COORD_p]);
             assert(z_block == 16 || z_block == 4);
-            const size_t z_block_count = output_view->parent->lengths.t[NN_DATA_COORD_z];
-            const size_t x_size = output_view->parent->lengths.t[NN_DATA_COORD_x];
-            const size_t y_size = output_view->parent->lengths.t[NN_DATA_COORD_y];
-            const size_t batch_size = output_view->parent->lengths.t[NN_DATA_COORD_n];
+            const uint32_t z_block_count = static_cast<uint32_t>(output_view->parent->lengths.t[NN_DATA_COORD_z]);
+            const uint32_t x_size        = static_cast<uint32_t>(output_view->parent->lengths.t[NN_DATA_COORD_x]);
+            const uint32_t y_size        = static_cast<uint32_t>(output_view->parent->lengths.t[NN_DATA_COORD_y]);
+            const uint32_t batch_size    = static_cast<uint32_t>(output_view->parent->lengths.t[NN_DATA_COORD_n]);
 
-            for (size_t it_batch = 0; it_batch < batch_size; ++it_batch)
-                for (size_t it_z_block = 0; it_z_block < z_block_count; ++it_z_block)
-                    for (size_t it_y = 0; it_y < y_size; ++it_y)
-                        for (size_t it_x = 0; it_x < x_size; ++it_x)
-                            for (size_t z_in_block = 0; z_in_block < z_block; z_in_block++)
+            for (uint32_t it_batch = 0; it_batch < batch_size; ++it_batch)
+                for (uint32_t it_z_block = 0; it_z_block < z_block_count; ++it_z_block)
+                    for (uint32_t it_y = 0; it_y < y_size; ++it_y)
+                        for (uint32_t it_x = 0; it_x < x_size; ++it_x)
+                            for (uint32_t z_in_block = 0; z_in_block < z_block; z_in_block++)
                                 output_data->at(it_batch, it_x, it_y, it_z_block, z_in_block, 0) = input_data->at(it_batch, it_x, it_y, it_z_block * z_block + z_in_block, 0, 0);
             break;
         }
@@ -350,17 +372,17 @@ namespace layer{
             auto output_data = reinterpret_cast<nn::workload_data<int16_t>*>(output_view);
 
             auto input_lenght = input_data->get_length();
-            const size_t z_block = input_lenght.t[NN_DATA_COORD_p];
-            const size_t z_block_count = input_lenght.t[NN_DATA_COORD_z];
-            const size_t x_size = input_lenght.t[NN_DATA_COORD_x];
-            const size_t y_size = input_lenght.t[NN_DATA_COORD_y];
-            const size_t batch_size = input_lenght.t[NN_DATA_COORD_n];
+            const uint32_t z_block = input_lenght.t[NN_DATA_COORD_p];
+            const uint32_t z_block_count = input_lenght.t[NN_DATA_COORD_z];
+            const uint32_t x_size = input_lenght.t[NN_DATA_COORD_x];
+            const uint32_t y_size = input_lenght.t[NN_DATA_COORD_y];
+            const uint32_t batch_size = input_lenght.t[NN_DATA_COORD_n];
 
-            for (size_t it_batch = 0; it_batch < batch_size; ++it_batch)
-                for (size_t it_z_block = 0; it_z_block < z_block_count; ++it_z_block)
-                    for (size_t it_y = 0; it_y < y_size; ++it_y)
-                        for (size_t it_x = 0; it_x < x_size; ++it_x)
-                            for (size_t z_in_block = 0; z_in_block < z_block; z_in_block++)
+            for (uint32_t it_batch = 0; it_batch < batch_size; ++it_batch)
+                for (uint32_t it_z_block = 0; it_z_block < z_block_count; ++it_z_block)
+                    for (uint32_t it_y = 0; it_y < y_size; ++it_y)
+                        for (uint32_t it_x = 0; it_x < x_size; ++it_x)
+                            for (uint32_t z_in_block = 0; z_in_block < z_block; z_in_block++)
                                 (*output_data)(it_batch, it_x, it_y, it_z_block * z_block + z_in_block, 0, 0)= (*input_data)(it_batch, it_x, it_y, it_z_block, z_in_block, 0);
             break;
         }
@@ -370,14 +392,22 @@ namespace layer{
     bool convert_zxyn_nx_f32::validate_input(size_t index, nn_workload_data_t *data) {
         switch (index) {
         case 0:
-            return nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, float>::validate<false>(
-                data, input_size_x, input_size_y, input_size_z, batch_size, 0, 0, 0, 0);
+            return nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::validate<false>(
+                data,
+                static_cast<uint32_t>(input_size_x),
+                static_cast<uint32_t>(input_size_y),
+                static_cast<uint32_t>(input_size_z),
+                static_cast<uint32_t>(batch_size),
+                0,
+                0,
+                0,
+                0);
         }
 
         throw std::invalid_argument("index out of range");
     }
 
-    void convert_zxyn_nx_f32::forward(const nn::workload_data<float> *input, nn::workload_data<float> *output)
+    void convert_zxyn_nx_f32::forward(const nn::workload_data<> *input, nn::workload_data<> *output)
     {
         if(batch_size == 1)
             // no batching, interleaving batches does no change to the data layout
@@ -392,8 +422,8 @@ namespace layer{
             batching_conversion<true, 48, 36864>(input, output);
         else{
             // reinterpret output as nzxy to interleave batches and produce single dimensional output correctly
-            nn_workload_data_layout_t nzxy_layout = nn::workload_data<float>::layout.nzxypq;
-            nn::workload_data<float> tmp_output(
+            nn_workload_data_layout_t nzxy_layout = nn::layout_t<nn::layout_nzxypq_f32>::layout;
+            nn::workload_data<nn::layout_f32> tmp_output(
                 NN_WORKLOAD_DATA_TAG_UNKNOWN, output->parent->data_buffer, input->parent->lengths, nzxy_layout);
             batching_conversion<false>(input, &tmp_output);
         }
@@ -406,8 +436,8 @@ namespace layer{
         assert(parameters.size() == 0);
         assert(outputs.size() == 1);
 
-        forward(reinterpret_cast<const nn::workload_data<float> *>(inputs[0]),
-                reinterpret_cast<nn::workload_data<float> *>(outputs[0]));
+        forward(nn::workload_data_cast<>(inputs[0]),
+                nn::workload_data_cast<>(outputs[0]));
     }
 
     void convert_zxyn_nx_f32::backward(
@@ -415,18 +445,59 @@ namespace layer{
         const std::vector<const nn_workload_data_t *> &parameters,
         const std::vector<const nn_workload_data_t *> &outputs)
     {
-        throw std::runtime_error("convert_zxyn_nx_f32::backward() not implemented");
+        assert(inputs.size() == 1);
+        assert(parameters.size() == 0);
+        assert(outputs.size() == 1);
+        
+        auto input_data =  nn::workload_data_cast<>(outputs[0]);
+        auto output_data = nn::workload_data_cast<>(inputs[0]);
+
+        nn::workload_data<> input(
+            input_data->parent->delta_buffer,
+            input_data->parent->lengths, input_data->parent->layout);
+
+        nn::workload_data<> output(
+            output_data->parent->delta_buffer,
+            output_data->parent->lengths, output_data->parent->layout);
+
+        if (batch_size == 1)
+            // no batching, interleaving batches does no change to the data layout
+            memcpy(output.parent->data_buffer, input.parent->data_buffer, output.parent->buffer_size);
+        else if (batch_size == 8)
+            batching_conversion<false,  8>(&input, &output);
+        else if (batch_size == 32)
+            batching_conversion<false, 32>(&input, &output);
+        else if (batch_size == 48)
+            batching_conversion<false, 48>(&input, &output);
+        else{
+            throw std::runtime_error("batch size not supported");
+        }
+        
     }
 
     std::vector<nn_workload_data_t *> convert_zxyn_nx_f32::create_inputs(bool allocate_delta) {
-        return {nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, float>::create(
-            device, input_size_x, input_size_y, input_size_z, batch_size, 0, 0, 0, 0, allocate_delta)};
+        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::create(
+                                                                          device,
+                                                                          static_cast<uint32_t>(input_size_x),
+                                                                          static_cast<uint32_t>(input_size_y),
+                                                                          static_cast<uint32_t>(input_size_z),
+                                                                          static_cast<uint32_t>(batch_size),
+                                                                          0,
+                                                                          0,
+                                                                          0,
+                                                                          0,
+                                                                          allocate_delta)};
     }
 
     std::vector<nn_workload_data_t *> convert_zxyn_nx_f32::create_outputs(bool allocate_delta) {
-        return {nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, float>::create(device, output_size, batch_size)};
+        return {nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, nn::layout_nx_f32>::create(
+                                                                        device,
+                                                                        static_cast<uint32_t>(output_size),
+                                                                        static_cast<uint32_t>(batch_size),
+                                                                        allocate_delta
+                                                                        )};
     }
-    
+
     convert_zxyn_nx_f32::convert_zxyn_nx_f32(
         size_t input_size_x, size_t input_size_y, size_t input_size_z, size_t batch_size, nn_device_internal *device)
         : input_size_x(input_size_x),
@@ -529,13 +600,25 @@ namespace layer{
 
     std::vector<nn_workload_data_t *> convert_z_block_xyz_z2nz::create_outputs(bool allocate_delta)
     {
-        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_X2NX, float>::create(device, output_size, batch_size, out_block_size) };
+        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_X2NX, nn::layout_x2nx_f32>::create(device,
+                                                                          static_cast<uint32_t>(output_size),
+                                                                          static_cast<uint32_t>(batch_size),
+                                                                          out_block_size) };
     }
 
     std::vector<nn_workload_data_t *> convert_z_block_xyz_z2nz::create_inputs(bool allocate_delta)
     {
-        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_ZBLOCKXYZN, float>::create(
-            device, input_size_x, input_size_y, input_size_z, batch_size, in_block_size, 0, 0, 0, 0) };
+        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_ZBLOCKXYZN, nn::layout_zblockxyzn_f32>::create(
+                                                                                device,
+                                                                                static_cast<uint32_t>(input_size_x),
+                                                                                static_cast<uint32_t>(input_size_y),
+                                                                                static_cast<uint32_t>(input_size_z),
+                                                                                static_cast<uint32_t>(batch_size),
+                                                                                static_cast<uint32_t>(in_block_size),
+                                                                                0,
+                                                                                0,
+                                                                                0,
+                                                                                0) };
     }
 
     bool convert_z2nz_n8xn::validate_input(size_t index, nn_workload_data_t *data)
@@ -554,10 +637,10 @@ namespace layer{
         const auto input_buffer = static_cast<int32_t *>(input_view->parent->data_buffer);
         auto output_buffer = static_cast<int32_t *>(output_view->parent->data_buffer);
 
-        for (auto n = 0; n < batchsize / 8; ++n)
-        for (auto z = 0; z < size_z; ++z)
+        for (auto n = 0u; n < batchsize / 8; ++n)
+        for (auto z = 0u; z < size_z; ++z)
         for (auto i = 0; i < 8; ++i)
-        for (auto p = 0; p < size_p; ++p)
+        for (auto p = 0u; p < size_p; ++p)
             output_buffer[i + 8 * (p + size_p *(z + n * size_z))] =
             input_buffer[p + size_p * ((i + n * 8) + z * batchsize)];
     }
@@ -584,14 +667,23 @@ namespace layer{
 
     std::vector<nn_workload_data_t *> convert_z2nz_n8xn::create_outputs(bool allocate_delta)
     {
-        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_X2NX, int32_t>::create(device, output_size, batch_size, in_block_size) };
+        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_X2NX, int32_t>::create(
+                                                                            device,
+                                                                            static_cast<uint32_t>(output_size),
+                                                                            static_cast<uint32_t>(batch_size),
+                                                                            static_cast<uint32_t>(in_block_size)) };
     }
 
     std::vector<nn_workload_data_t *> convert_z2nz_n8xn::create_inputs(bool allocate_delta)
     {
-        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_X2NX, int32_t>::create(device, output_size, batch_size, in_block_size) };
+        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_X2NX, int32_t>::create(
+                                                                            device,
+                                                                            static_cast<uint32_t>(output_size),
+                                                                            static_cast<uint32_t>(batch_size),
+                                                                            static_cast<uint32_t>(in_block_size)) };
     }
-};
+
+} //namespace layer
 
 nn_primitive_handle_t NN_API_CALL_CONVENTION nn_primitives_convert_zxyn_nx_f32_create_0(
     nn_device_t *device, /* IDLF device handle */
@@ -629,3 +721,28 @@ nn_primitive_handle_t NN_API_CALL_CONVENTION nn_primitives_convert_z2nz_n8xn_cre
     return new layer::convert_z2nz_n8xn(
         input_size_z, batch_size, reinterpret_cast<nn_device_internal *>(device));
 }
+
+nn_primitive_handle_t NN_API_CALL_CONVENTION
+ nn_primitives_convert_from_zxyn_to_batch_block_format_nzxyn_create(
+     nn_device_t *device,
+     size_t input_size_x,
+     size_t input_size_y,
+     size_t input_size_z,
+     size_t batch_size)
+{
+    return new layer::convert_from_zxyn_to_batch_block_format_nzxyn(
+        batch_size, input_size_x, input_size_y, input_size_z, static_cast<nn_device_internal*>(device));
+}
+
+nn_primitive_handle_t NN_API_CALL_CONVENTION
+ nn_primitives_convert_from_batch_block_format_to_zxyn_create(
+     nn_device_t *device,
+     size_t input_size_x,
+     size_t input_size_y,
+     size_t input_size_z,
+     size_t batch_size)
+{
+    return new layer::convert_from_batch_block_format_to_zxyn(
+        batch_size, input_size_x, input_size_y, input_size_z, static_cast<nn_device_internal*>(device));
+}
+

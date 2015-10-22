@@ -124,6 +124,7 @@ TEST(api_workloads, workflow_item_create_delete)
             for (auto index = 0u; index<input_count; ++index) {
                 EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_delete_function(input[index].item));
             }
+            delete[] input;
         }
     }
 
@@ -280,6 +281,8 @@ TEST(api_workloads, workflow_in_pooling_out)
             EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_create_function(&pooling, 1, &desc0, 1));
             pooling->type = NN_WORK_ITEM_TYPE_POOLING;
             pooling->arguments.forward_pooling = nn_arguments_forward_pooling_t{
+                NN_PADDING_MODE_DATA_OR_ZERO,
+                {0, 0},             /* center offset */
                 {1, 1},             /* stride during filtering operation */
                 {2, 2},             /* pooling area size */
                 NN_POOLING_MODE_MAX /* pooling mode */
@@ -346,6 +349,8 @@ TEST(api_workloads, workflow_in_pooling_out_compilation)
             EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_create_function(&pooling, 1, &desc0, 1));
             pooling->type = NN_WORK_ITEM_TYPE_POOLING;
             pooling->arguments.forward_pooling = nn_arguments_forward_pooling_t{
+                NN_PADDING_MODE_DATA_OR_ZERO,
+                {0, 0},             /* center offset */
                 {1, 1},             /* stride during filtering operation */
                 {2, 2},             /* pooling area size */
                 NN_POOLING_MODE_MAX /* pooling mode */

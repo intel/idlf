@@ -87,7 +87,7 @@ namespace int16_fixedpoint {
 
     protected:
         virtual void forward(
-            const nn::workload_data<float> *input,
+            const nn::workload_data<nn::layout_f32> *input,
             nn::workload_data<int16_t> *output);
 
         const uint32_t block_size = 4;

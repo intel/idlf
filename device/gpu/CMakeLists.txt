@@ -50,6 +50,7 @@ set (API_INTERNAL_SRC
 file (GLOB DEVICE_GPU_COMMON_SRC
       "../common/nn_device_interface_0_internal_common.cpp"
       "../common/nn_workload_data.cpp"
+      "../common/nn_allocate.cpp"
       "../common/nn_workload_data.h")
       
 set (DEVICE_API

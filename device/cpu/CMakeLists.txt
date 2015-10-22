@@ -48,6 +48,8 @@ file (GLOB DEVICE_CPU_COMMON_SRC
       "../common/nn_device_internal.h"
       "../common/nn_device_interface_0_internal_common.cpp"
       "../common/nn_workload_data.cpp"
+      "../common/nn_asmjit_compilation.cpp"
+      "../common/nn_allocate.cpp"
       "../common/nn_workload_data.h")
 
 
@@ -75,7 +77,7 @@ else()
     message("Unknown configuration")
 endif()
 
-target_link_libraries(${TARGET_NAME})
+target_link_libraries(${TARGET_NAME} asmjit)
 
 set_target_properties( ${TARGET_NAME}
                        PROPERTIES
@@ -108,3 +110,4 @@ if ((NOT UNIX) AND (NOT (${CMAKE_BUILD_TYPE} STREQUAL "DebugULT")))
                      )
   endif()
 endif()
+

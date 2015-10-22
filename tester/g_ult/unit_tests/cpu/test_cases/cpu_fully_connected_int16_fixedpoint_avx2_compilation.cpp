@@ -88,11 +88,13 @@ static void ult_nn_fc_deinitialize_work_item(nn_workload_item* &work_item){
     delete arguments.biases;
     delete arguments.weights;
 
-    work_item->input.clear();
-    delete work_item->output;
+    for(auto& output : work_item->output)
+    {
+        delete output;
+        output = nullptr;
+    }
 
     delete work_item;
-
     work_item = nullptr;
 }
 

@@ -27,6 +27,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "tester/g_ult/unit_tests/cpu/naive_implementations.h"
 #include "device/cpu/core/layer_pooling_avx2.h"
+#include <cfloat>
+#include <gtest/gtest.h>
 
 namespace
 {
@@ -78,13 +80,24 @@ void run_work_item(nn_workload_item *work_item, nn_device_t *device) {
     layer::wrapper_pooling_work_item(work_item);
 }
 
-void destroy_work_item(nn_workload_item *&work_item) {
-    work_item->input.clear();
+void destroy_work_item(nn_workload_item *&work_item) 
+{
+    for(auto& parameter : work_item->parameters)
+    {
+        delete parameter;
+        parameter = nullptr;
+    }
 
-    delete reinterpret_cast<nn::workload_data<float> *>(work_item->output[0]);
+    for(auto& output : work_item->output)
+    {
+        delete output;
+        output = nullptr;
+    }
+
+    delete work_item->primitive;
+    work_item->primitive = nullptr;
 
     delete work_item;
-
     work_item = nullptr;
 }
 
@@ -108,12 +121,12 @@ void create_and_initialize_input_item(
     work_item = new nn_workload_item();
 
     work_item->type = NN_WORK_ITEM_TYPE_INPUT;
-
+    work_item->primitive = nullptr;
     work_item->arguments.input.index = 0;
 
-    nn_workload_data_layout_t inp_out_layout = nn::workload_data<float>::layout.zxynpq;
+    nn_workload_data_layout_t inp_out_layout = nn::layout_t<nn::layout_zxynpq_f32>::layout;
 
-    work_item->output.push_back(new nn::workload_data<float>(in_out_coords, inp_out_layout));
+    work_item->output.push_back(new nn::workload_data<>(in_out_coords, inp_out_layout));
 
     for (uint32_t batch = 0; batch < batch_size; ++batch)
     {
@@ -172,6 +185,8 @@ void create_and_initialize_work_item(
                                             size_z,
                                             output_size_x,
                                             output_size_y,
+                                            0,
+                                            0,
                                             batch_size,
                                             check_view ? 1 : 0,
                                             check_view ? 4 : 0,
@@ -182,7 +197,7 @@ void create_and_initialize_work_item(
 
     work_item->input.push_back({ input_item, 0 });
 
-    nn_workload_data_layout_t inp_out_layout = nn::workload_data<float>::layout.zxynpq;
+    nn_workload_data_layout_t inp_out_layout = nn::layout_t<nn::layout_zxynpq_f32>::layout;
 
     work_item->output.push_back(primitive->create_outputs()[0]);
 
@@ -225,7 +240,7 @@ bool ult_perform_test(
     auto output = nn::data<float, 4>(input_size_z, output_size_x, output_size_y, batch_size);
 
     // Execute reference item.
-    run_reference(reinterpret_cast<nn::workload_data<float> *>(input_item->output[0]),
+    run_reference(nn::workload_data_cast<>(input_item->output[0]),
                                   output_ref,
                                   pool_size_x,
                                   pool_size_y,
@@ -247,7 +262,7 @@ bool ult_perform_test(
 
     return return_value;
 }
-}
+} //namespace
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Tests.

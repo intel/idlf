@@ -34,12 +34,16 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <deque>
 #include <map>
 
+#ifdef NDEBUG
+#define ENABLE_WORKLOAD_PROFILING 1
+#else
 #define ENABLE_WORKLOAD_PROFILING 0
+#endif
 
 const size_t max_threads = 18;
 
 // NN_UNREACHABLE_CODE signal to supporting compiler that specific location in code cannot be reached
-#if defined _MSC_VER 
+#if defined _MSC_VER
 #   define NN_UNREACHABLE_CODE __assume(0)
 #endif
 
@@ -69,6 +73,14 @@ namespace nn {
 struct arguments_forward_convolution_pooling_max_2x2_stride_2x2 {
     ::nn_workload_data_t       *biases;           /* biases */
     ::nn_workload_data_t       *weights;          /* weights */
+};
+
+/* arguments for input layers
+   Index identifies input when workload has more than 1 input.
+   Copy on merge says if merge layer should copy data instead of making view */
+struct arguments_input {
+    uint32_t                    index;          /* input index */
+    bool                        copy_on_merge;
 };
 
 /* arguments for convolution fixed point layers */
@@ -119,7 +131,7 @@ typedef struct nn_workload_item {
     /* union of packaged arguments for each layer type */
     union {
         /* arguments for simple NN layers */
-        nn_arguments_input_t                                            input;
+        nn::arguments_input                                             input;
         nn_arguments_output_t                                           output;
         nn_arguments_view_t                                             view;
         nn_arguments_update_t                                           update;
@@ -149,7 +161,6 @@ typedef struct nn_workload_item {
     std::vector<nn_workload_data_t *> parameters;
 
     std::string                                 name;           /* optional name for profiling and debug */
-    std::vector<nn_workload_use_descriptor>     use;            /* work items that use results of current one, along with id of output they use */
     nn_workload_item                           *forward_item;   /* pointer to forward item - used by backward primitives */
     nn_primitive_handle_t                       primitive;
 } nn_workload_item_t;
@@ -170,15 +181,23 @@ typedef struct profiling_data{
     std::map<nn_workload_item*, std::vector<uint64_t>> work_item_cycles;
 } profiling_data_t;
 
-/* opaque (invisible to user) part of workload */
-typedef struct nn_workload_opaque {
-    std::vector<nn_workload_item_t *> input;
-    std::vector<nn_workload_item_t *> output;
-    std::deque <nn_workload_item_t *> order_of_execution;
+struct nn_workload_opaque_t : nn_workload_t
+{
+    nn_workload_opaque_t(nn_workload_t workload_public)
+        : nn_workload_t(workload_public)
+    {}
+
+    std::vector<nn_workload_item_t *>  input;
+    std::vector<nn_workload_item_t *>  output;
+    std::vector<nn_workload_item_t *>  order_of_execution;
+
+    std::vector<nn_workload_params>    params;
+    std::vector<std::string>           param_names;
+    std::vector<std::vector<uint32_t>> param_sizes;
 #if ENABLE_WORKLOAD_PROFILING
     profiling_data_t                  profiling_data;
 #endif
-} nn_workload_opaque_t;
+};
 
 /* create empty workflow */
 NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_create_0_function(
@@ -265,3 +284,24 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_translate_api_status_0_function(
     char*              *brief,           /* one-line explanation */
     char*              *detailed         /* multi-line explanation */
     );
+
+NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_query_param_0_function(
+    nn_workload_t          *workload_public, /* workload to be queried */
+    nn_workload_params    **params,          /* returns list of parameters found in workload along with their sizes */
+    uint32_t               *num_params       /* number of params returned */
+    );
+
+NN_API_STATUS NN_API_CALL_CONVENTION nn_workload_recover_param_0_function(
+    nn_workload_t          *workload_public, /* workload to be queried */
+    char                   *param_name,      /* name of parameter to recover */
+    nn_data                *data             /* data will be returned to this pointer */
+    );
+
+/*
+ * enable faster jit primitives for batch 24*n,
+ * all consequtive compilations will use jit primitivies
+ * the jit primitives won't work for backpropagation,
+ * so disable it for training
+ */
+NN_API_STATUS NN_API_CALL_CONVENTION nn_set_use_jit_primitives_0_function(int flag);
+

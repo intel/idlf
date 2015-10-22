@@ -36,7 +36,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdexcept>
 
 // NN_CODE_UNREACHABLE signal to supporting compiler that specific location in code cannot be reached
-#if defined _MSC_VER 
+#if defined _MSC_VER
 #   define NN_UNREACHABLE_CODE __assume(0)
 #endif
 
@@ -90,7 +90,7 @@ namespace int16_fixedpoint
     }
 
     void convert_float_to_int16::forward(
-        const nn::workload_data<float> *input_view,
+        const nn::workload_data<nn::layout_f32> *input_view,
         nn::workload_data<int16_t> *output_view)
     {
         auto input_ptr = reinterpret_cast<float *>(input_view->parent->data_buffer);
@@ -265,7 +265,7 @@ namespace int16_fixedpoint
         assert(inputs.size() == 1);
         assert(outputs.size() == 1);
 
-        forward(reinterpret_cast<const nn::workload_data<float> *>(inputs[0]),
+        forward(nn::workload_data_cast<nn::layout_f32>(inputs[0]),
             reinterpret_cast<nn::workload_data<int16_t> *>(outputs[0]));
     }
 
@@ -276,7 +276,7 @@ namespace int16_fixedpoint
 
     std::vector<nn_workload_data_t *> convert_float_to_int16::create_inputs(bool allocate_delta)
     {
-        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, float>::create(
+        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::create(
             device, input_w, input_h, num_input, batch_size, 0, 0, 0, 0, allocate_delta) };
     }
 
@@ -683,7 +683,7 @@ else \
 
     void run_convert_float_to_int16_fp_work_item(nn_workload_item *const work_item, nn_device_internal* device)
     {
-        auto input_view = reinterpret_cast<nn::workload_data<float> *>(work_item->input[0].get_data_view());
+        auto input_view = reinterpret_cast<nn::workload_data<nn::layout_f32> *>(work_item->input[0].get_data_view());
         auto output_view = reinterpret_cast<nn::workload_data<std::int16_t> *>(work_item->output[0]);
 
         static_cast<convert_float_to_int16 *>(work_item->primitive)->forward(input_view, output_view);

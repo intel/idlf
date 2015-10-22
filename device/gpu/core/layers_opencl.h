@@ -32,7 +32,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #   include<cstdio>
 #   define DBG_PRINTF(...) printf(__VA_ARGS__)
 #else
-#   define DBG_PRINTF(...) 
+#   define DBG_PRINTF(...)
 #endif
 
 #include <vector>
@@ -56,7 +56,7 @@ void CL_CALLBACK exec_completed( cl_event e, cl_int status, void *data );
 
 enum class Conversion: unsigned short {NO_CONVERSION = 0, CONVERSION_ZXY_TO_3D = 1 };
 
-//Device GPU exception class 
+//Device GPU exception class
 class runtime_error : public std::runtime_error
 {
 private:
@@ -109,7 +109,7 @@ public:
     NN_ACTIVATION_FUNCTION m_activation_function;
 public:
     conv_kernel_key( unsigned int total_out_depth,
-		     unsigned int total_in_depth,//taby?
+             unsigned int total_in_depth,//taby?
                      unsigned int in_width,
                      unsigned int in_height,
                      unsigned int in_depth,
@@ -130,7 +130,7 @@ public:
                      unsigned int output_width_pad,
                      unsigned int output_height_pad,
                      unsigned int output_buffer_offset,
-                     unsigned int batch, 
+                     unsigned int batch,
                      bool image_as_output ) :
         m_total_output_depth( total_out_depth ), m_total_input_depth( total_in_depth ), m_input_width( in_width ), m_input_height( in_height ), m_input_depth( in_depth ),
         m_input_start_x( in_start_x ), m_input_start_y( in_start_y ), m_input_start_z( in_start_z ),
@@ -149,11 +149,11 @@ struct conv_kernel_variants
     std::unique_ptr< cl::Kernel > m_kernel;        // main kernel
     std::unique_ptr< cl::Kernel > m_kernel_resx;   // kernel for residual outputs in x dimension
     std::unique_ptr< cl::Kernel > m_kernel_resy;   // kernel for residual outputs in y dimension
-    
+
     cl::NDRange                   m_gws;      //< GWS to be used
     cl::NDRange                   m_lws;      //< LWS to be used
     cl::NDRange                   m_offset;   //< EnqueueNDRange offset
-    
+
     cl::NDRange                   m_gws_resx;      //< GWS to be used by m_kernel_resx
     cl::NDRange                   m_offset_resx;   //< EnqueueNDRange offset for m_kernel_resx
 
@@ -176,21 +176,21 @@ struct conv_kernel_variants
         m_num_fmads( arg.m_num_fmads ), m_num_fmads_resx( arg.m_num_fmads_resx ), m_num_fmads_resy( arg.m_num_fmads_resy )
     {}
 
-    conv_kernel_variants( std::unique_ptr< cl::Kernel >&& kernel, cl::NDRange gws, cl::NDRange lws, cl::NDRange offset, 
+    conv_kernel_variants( std::unique_ptr< cl::Kernel >&& kernel, cl::NDRange gws, cl::NDRange lws, cl::NDRange offset,
                           uint32_t batch, std::string kernel_name) :
-        m_kernel(std::move(kernel)), m_gws(std::move(gws)), m_lws(std::move(lws)), m_offset(std::move(offset)), 
+        m_kernel(std::move(kernel)), m_gws(std::move(gws)), m_lws(std::move(lws)), m_offset(std::move(offset)),
         m_batch(batch), m_kernel_name(std::move(kernel_name)),
         m_kernel_resx(nullptr), m_gws_resx(cl::NullRange), m_offset_resx(cl::NullRange),
         m_kernel_resy(nullptr), m_gws_resy(cl::NullRange), m_offset_resy(cl::NullRange),
         m_num_fmads( 0 ), m_num_fmads_resx( 0 ), m_num_fmads_resy( 0 )
     {}
 
-    conv_kernel_variants( std::unique_ptr< cl::Kernel >&& kernel, cl::NDRange gws, cl::NDRange lws, cl::NDRange offset, 
+    conv_kernel_variants( std::unique_ptr< cl::Kernel >&& kernel, cl::NDRange gws, cl::NDRange lws, cl::NDRange offset,
                           std::unique_ptr< cl::Kernel >&& kernel_resx, cl::NDRange gws_resx, cl::NDRange offset_resx,
                           std::unique_ptr< cl::Kernel >&& kernel_resy, cl::NDRange gws_resy, cl::NDRange offset_resy,
                           uint64_t num_fmads, uint64_t num_fmads_resx, uint64_t num_fmads_resy,
                           uint32_t batch, std::string kernel_name) :
-        m_kernel(std::move(kernel)), m_gws(std::move(gws)), m_lws(std::move(lws)), m_offset(std::move(offset)), 
+        m_kernel(std::move(kernel)), m_gws(std::move(gws)), m_lws(std::move(lws)), m_offset(std::move(offset)),
         m_kernel_resx(std::move(kernel_resx)), m_gws_resx(std::move(gws_resx)), m_offset_resx(std::move(offset_resx)),
         m_kernel_resy(std::move(kernel_resy)), m_gws_resy(std::move(gws_resy)), m_offset_resy(std::move(offset_resy)),
         m_num_fmads( num_fmads ), m_num_fmads_resx( num_fmads_resx ), m_num_fmads_resy( num_fmads_resy ),
@@ -209,9 +209,9 @@ public:
     unsigned int           m_num_batches;
 
 public:
-    arithmetic_kernel_key(Conversion conv_to_perform, NN_ARITHMETIC_FUNCTION arithmetic_function, 
+    arithmetic_kernel_key(Conversion conv_to_perform, NN_ARITHMETIC_FUNCTION arithmetic_function,
                           unsigned int total_input_width, unsigned int total_input_height, unsigned int total_input_depth, unsigned int num_batches) :
-        m_conv_to_perform(conv_to_perform), m_arithmetic_function(arithmetic_function), 
+        m_conv_to_perform(conv_to_perform), m_arithmetic_function(arithmetic_function),
         m_total_input_width(total_input_width), m_total_input_height(total_input_height), m_total_input_depth(total_input_depth),
         m_num_batches(num_batches)
     {}
@@ -326,15 +326,15 @@ struct fully_connected_kernel_variants
     std::unique_ptr< cl::Kernel > m_kernel;         // preferred kernel
     std::string                   m_kernel_name;    // Name of kernel
     uint32_t                      m_batch_tile;
-    
+
     fully_connected_kernel_variants( fully_connected_kernel_variants && arg )
         : m_kernel( std::move( arg.m_kernel ) ), m_batch_tile( arg.m_batch_tile ),
         m_kernel_name( std::move( arg.m_kernel_name ) )
     {}
 
-    fully_connected_kernel_variants( std::unique_ptr< cl::Kernel >&& kernel, 
+    fully_connected_kernel_variants( std::unique_ptr< cl::Kernel >&& kernel,
                                       uint32_t batch_tile, std::string kernel_name ) :
-        m_kernel( std::move( kernel ) ), m_batch_tile( batch_tile ), 
+        m_kernel( std::move( kernel ) ), m_batch_tile( batch_tile ),
         m_kernel_name( std::move( kernel_name ) )
     {}
 

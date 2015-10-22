@@ -49,8 +49,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <fstream>
 #include <streambuf>
 #include <sstream>
-
-
 #endif
 
 /* This file contains internal device structure implementation as well as thread pool class.
@@ -58,7 +56,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Thread pool usage:
     0. Thread pool object is accessible inside internal device implementation.
     1. Create 'job' vector that will contain all requests for thread pool.
-    2. Each request should contain callback function that is able to 'unpack' opaque 
+    2. Each request should contain callback function that is able to 'unpack' opaque
        request_handle that is also sent inside request.
     3. Specific implementation of opaque internal structure can be made if required.
     4. After 'job' is created, use push_job function.
@@ -81,7 +79,7 @@ struct nn_multithreaded_request
 {
     // Callback that will be called with opaque request handle.
     std::function<void(void*)> callback;
-    
+
     // Generic request handle.
     void* request_handle;
 };
@@ -91,22 +89,22 @@ class nn_semaphore
 {
 public:
     // Setup semaphore and clear its counter.
-    nn_semaphore() 
+    nn_semaphore()
         : mtx(),
           mtx_lock(mtx, std::defer_lock),
           count(0) {}
 
     // Set semaphore specific value that will be later decremented.
-    void set_semaphore(size_t _count) 
-    { 
+    void set_semaphore(size_t _count)
+    {
         // Thread pool queue should be cleared which is indicated by semaphore value (==0).
         mtx_lock.lock();
-        assert(count == 0); 
-        count = _count; 
+        assert(count == 0);
+        count = _count;
     }
 
-    // Notifies waiters, decrements semaphore value and atomically clears working state 
-    // under semaphore lock. This method is called under wake lock also - as should 
+    // Notifies waiters, decrements semaphore value and atomically clears working state
+    // under semaphore lock. This method is called under wake lock also - as should
     // be every place changing request value.
     void atomic_clear_state_and_notify(nn_multithreaded_request** request)
     {
@@ -193,7 +191,7 @@ public:
 #ifdef __linux__
     void get_affinity_np(size_t cpusetsize, cpu_set_t *cpuset)
     {
-        int err =  pthread_getaffinity_np(worker_thread.native_handle(), sizeof(cpu_set_t), cpuset);  
+        int err =  pthread_getaffinity_np(worker_thread.native_handle(), sizeof(cpu_set_t), cpuset);
         if(err != 0)
         {
             throw std::runtime_error(std::string("Error getting affinity of thread. pthread_getaffinity_np error code: ") + std::to_string(err));
@@ -226,7 +224,7 @@ private:
         {
             // Waits for notification that can be caused by new task or destructor.
             // When thread is in waiting state, it removes lock so other threads can push
-            // new jobs into it or check its state. But after thread is notified, it locks 
+            // new jobs into it or check its state. But after thread is notified, it locks
             // it again, so no code under this mutex can interfere during task processing.
             // It also causes thread to wait until all other threads changing its state
             // complete their work before thread starts.
@@ -278,7 +276,7 @@ struct platform_info
     long num_logical_processors;
     long num_physical_processors_per_socket;
     long num_hw_threads_per_socket;
-    unsigned int num_ht_threads; 
+    unsigned int num_ht_threads;
     unsigned int num_total_phys_cores;
 };
 
@@ -290,17 +288,17 @@ class nn_hardware_platform
         {
 #ifdef __linux__
             m_num_logical_processors = sysconf(_SC_NPROCESSORS_ONLN);
-        
+
             m_num_physical_processors_per_socket = 0;
 
             std::ifstream ifs;
-            ifs.open("/proc/cpuinfo"); 
+            ifs.open("/proc/cpuinfo");
 
             // If there is no /proc/cpuinfo fallback to default scheduler
             if(ifs.good() == false) {
                 m_num_physical_processors_per_socket = m_num_logical_processors;
                 assert(0);  // No cpuinfo? investigate that
-                return;   
+                return;
             }
             std::string cpuinfo_content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
             std::stringstream cpuinfo_stream(cpuinfo_content);
@@ -308,12 +306,12 @@ class nn_hardware_platform
             while(std::getline(cpuinfo_stream,cpuinfo_line,'\n')){
                 if(cpuinfo_line.find("cpu cores") != std::string::npos) {
                     // convert std::string into number eg. skip colon and after it in the same line  should be number of physical cores per socket
-                    std::stringstream( cpuinfo_line.substr(cpuinfo_line.find(":") + 1) ) >> m_num_physical_processors_per_socket; 
+                    std::stringstream( cpuinfo_line.substr(cpuinfo_line.find(":") + 1) ) >> m_num_physical_processors_per_socket;
                     break;
                 }
                 if(cpuinfo_line.find("siblings") != std::string::npos) {
                     // convert std::string into number eg. skip colon and after it in the same line  should be number of HW threads per socket
-                    std::stringstream( cpuinfo_line.substr(cpuinfo_line.find(":") + 1) ) >> m_num_hw_threads_per_socket; 
+                    std::stringstream( cpuinfo_line.substr(cpuinfo_line.find(":") + 1) ) >> m_num_hw_threads_per_socket;
                 }
             }
             // There is cpuinfo, but parsing did not get quite right? Investigate it
@@ -325,13 +323,13 @@ class nn_hardware_platform
             // calculate total number of physical cores eg. how many full Hw threads we can run in parallel
             m_num_total_phys_cores = m_num_hw_threads_per_socket != 0 ? m_num_logical_processors / m_num_hw_threads_per_socket * m_num_physical_processors_per_socket : 1;
 
-            ifs.close(); 
+            ifs.close();
 #endif
         }
     void get_platform_info(platform_info& pi)
     {
-       pi.num_logical_processors = m_num_logical_processors; 
-       pi.num_physical_processors_per_socket = m_num_physical_processors_per_socket; 
+       pi.num_logical_processors = m_num_logical_processors;
+       pi.num_physical_processors_per_socket = m_num_physical_processors_per_socket;
        pi.num_hw_threads_per_socket = m_num_hw_threads_per_socket;
        pi.num_ht_threads = m_num_ht_threads;
        pi.num_total_phys_cores = m_num_total_phys_cores;
@@ -358,7 +356,7 @@ public:
             // Check system to get number of HW threads available.
             // TODO: add specific implementation for windows/linux to get exact value of cores.
             num_threads = std::thread::hardware_concurrency() / 2; // take half, to work on 1 of 2 sockets
-            
+
         }
         else
         {
@@ -367,7 +365,7 @@ public:
         }
 
 
-        // If there is only one thread available - do not create 
+        // If there is only one thread available - do not create
         // subthreads, pool will process all jobs on its own.
         if (num_threads > 1)
         {
@@ -391,7 +389,7 @@ public:
         // same physical core
         // This is useful for Fully connected layer under linux where linux scheduler
         // happens to run two threads on one core while having physical cores available and idle
-        // Also count number of physical threads we can have to compare it at runtime 
+        // Also count number of physical threads we can have to compare it at runtime
         // with number of working threads to be processing to decide if affinity should be changed for threads
         m_physical_cpuset = m_original_cpuset;
         if( hw_info.num_ht_threads > 1) {
@@ -399,18 +397,18 @@ public:
                 if( CPU_ISSET(i,&m_physical_cpuset) ) {
                     ++m_max_physical_threads;
                     for(unsigned int j = i + hw_info.num_total_phys_cores; j < hw_info.num_logical_processors; ++j ) {
-                        CPU_CLR(j,&m_physical_cpuset); 
+                        CPU_CLR(j,&m_physical_cpuset);
                     }
                 }
             }
         }
 
-        // verification (printing of set of physical mask) . 
+        // verification (printing of set of physical mask) .
         // Please do nto remove it as it is helpful during development process!
         //printf("Affinity[%d]: ",0);
         //for(unsigned int j =0; j< hw_info.num_logical_processors; ++j) {
-           //printf("%d,",CPU_ISSET(j,&m_physical_cpuset) == true ? 1 : 0); 
-        //} 
+           //printf("%d,",CPU_ISSET(j,&m_physical_cpuset) == true ? 1 : 0);
+        //}
         //printf("\n");
 #else
     //TODO: windows
@@ -438,7 +436,7 @@ public:
         // computational tasks on the same physical CPU core when no
         // other important job is running on diffrent CPU core
         // which makes all computation running slower than expected
-        // So in case of having enough CPU physical cores to run 
+        // So in case of having enough CPU physical cores to run
         // threads separatly eg. one physical thread on one physical CPU core,
         // we modify affinity not allow scheduler to have to threads on the same physical CPU core
 #ifdef __linux__
@@ -502,7 +500,7 @@ public:
             {
                 (*thread).set_affinity_np(sizeof(cpu_set_t), &m_original_cpuset);
             }
-#else 
+#else
             // TODO: Windows
 #endif
 

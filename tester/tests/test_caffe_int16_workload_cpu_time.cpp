@@ -79,7 +79,7 @@ bool test_caffe_int16_workload_cpu_time::init()
         init_ok = false;
     }
     catch(...) {
-        init_result << "unknown error";
+        init_result << "error: unknown";
         init_ok = false;
     }
 
@@ -225,7 +225,7 @@ bool test_caffe_int16_workload_cpu_time::done()
         done_ok = false;
     }
     catch(...) {
-        done_result << "unknown error";
+        done_result << "error: unknown";
         done_ok = false;
     }
 

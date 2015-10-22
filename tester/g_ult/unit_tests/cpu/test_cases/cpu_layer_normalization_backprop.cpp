@@ -90,7 +90,7 @@ namespace
         nn_workflow_item_t *normalization = nullptr;
         {
             nn_workflow_use_descriptor_t desc0 = { input, 0 };
-            EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_create_function(&normalization, 1, &desc0, 1));
+            EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_create_function(&normalization, 1, &desc0, 2));
             normalization->type = NN_WORK_ITEM_TYPE_NORMALIZATION;
 
             auto& args = normalization->arguments.forward_normalization.normalization;
@@ -129,8 +129,8 @@ namespace
         // Create normalization backprop.
         nn_workflow_item_t *norm_backprop = nullptr;
         {
-            nn_workflow_use_descriptor_t desc0 = { loss_function, 0 };
-            EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_create_function(&norm_backprop, 1, &desc0, 1));
+            nn_workflow_use_descriptor_t desc0[] = { { loss_function, 0 }, { normalization, 1 }};
+            EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_create_function(&norm_backprop, 2, desc0, 1));
             norm_backprop->type = NN_WORK_ITEM_TYPE_NORMALIZATION_BACKPROP;
 
             norm_backprop->forward_item = normalization;
@@ -159,17 +159,18 @@ namespace
     nn_workload_item_t* get_backprop(
         nn_workload_t* workload)
     {
-        nn_workload_opaque_t* workload_opaque = reinterpret_cast<nn_workload_opaque_t*>(workload + 1);
+        nn_workload_opaque_t* workload_opaque = static_cast<nn_workload_opaque_t*>(workload);
         nn_workload_item_t *workload_backprop = workload_opaque->order_of_execution.back();
         assert(workload_backprop->type == NN_WORK_ITEM_TYPE_NORMALIZATION_BACKPROP);
 
         return workload_backprop;
     }
 
-    void backward_naive(const nn::workload_data<float> *forward_input,
-                        const nn::workload_data<float> *forward_output,
-                        const nn::workload_data<float> *backward_input,
-                        nn::workload_data<float> *backward_output,
+    void backward_naive(const nn::workload_data<nn::layout_f32> *forward_input,
+                        const nn::workload_data<nn::layout_f32> *forward_intermediate,
+                        const nn::workload_data<nn::layout_f32> *forward_output,
+                        const nn::workload_data<nn::layout_f32> *backward_input,
+                        nn::workload_data<nn::layout_f32> *backward_output,
                         uint32_t n_arg,
                         float alpha,
                         float beta)
@@ -199,17 +200,17 @@ namespace
                             if (out_feature_map >= 0 && out_feature_map < forward_output->get_length(NN_DATA_COORD_z))
                             {
                                 float n_out = forward_input->at(batch, column, row, out_feature_map, 0, 0);
-                                float a_out = forward_output->at(batch, out_column, out_row, out_feature_map, 0, 0);
+                                float int_out = forward_intermediate->at(batch, column, row, out_feature_map, 0, 0);
                                 float n_in = forward_input->at(batch, column, row, in_feature_map, 0, 0);
 
-                                float acc = -2.0f * alpha * beta * n_out * n_in * std::pow(a_out / n_out, 1.0f + 1.0f / beta);
+                                float acc = (n_in * (std::pow(int_out, -beta) / int_out)) * ((-2.0f * alpha) * (beta * n_out));
 
                                 if (out_feature_map == in_feature_map)
                                 {
-                                    acc += a_out / n_out;
+                                    acc += std::pow(int_out, -beta);
                                 }
-
-                                derivative_accumulator += acc * backward_input->at(batch, out_column, out_row, out_feature_map, 0, 0);
+                                auto error = backward_input->at(batch, out_column, out_row, out_feature_map, 0, 0);
+                                derivative_accumulator += acc * error;
                             }
                         }
 
@@ -224,8 +225,8 @@ namespace
         nn_workload_data_t* data_item,
         nn_workload_data_t* data_item_ref)
     {
-        nn::workload_data<float> data(data_item->parent->data_buffer, data_item->parent->lengths, data_item->parent->layout);
-        nn::workload_data<float> reference(data_item_ref->parent->data_buffer, data_item_ref->parent->lengths, data_item_ref->parent->layout);
+        nn::workload_data<nn::layout_f32> data(data_item->parent->data_buffer, data_item->parent->lengths, data_item->parent->layout);
+        nn::workload_data<nn::layout_f32> reference(data_item_ref->parent->data_buffer, data_item_ref->parent->lengths, data_item_ref->parent->layout);
         auto& size = data_item->parent->lengths;
         for (auto n = 0u; n < size.t[0]; ++n)
             for (auto x = 0u; x < size.t[1]; ++x)
@@ -239,30 +240,29 @@ namespace
 
                                 float diff = fabs(value_ref - value);
 
-                                if (value_ref == 0.0f || value == 0.0f || diff < FLT_MIN)
-                                {
-                                    if (diff > FLT_MIN)
-                                    {
-                                        return false;
-                                    }
-                                }
-                                else
-                                {
-                                    if (fabs(diff / value_ref) > 5.2e-05F)
-                                    {
-                                        return false;
-                                    }
-                                }
+                                if(diff <= 2.5e-6f)
+                                    continue;
+                                
+                                value = fabs(value);
+                                value_ref = fabs(value_ref);
+
+                                float largest = (value_ref > value) ? value_ref : value;
+
+                                if(diff <= largest * 1.0e-2f)
+                                    continue;
+
+                                return false;
                             }
 
         return true;
     }
 
     void run_primitives_api(
-        nn::workload_data<float>* forward_input,
-        nn::workload_data<float>* forward_output,
-        nn::workload_data<float>* backward_input,
-        nn::workload_data<float>* backward_error_delta,
+        nn::workload_data<nn::layout_f32>* forward_input,
+        nn::workload_data<nn::layout_f32>* forward_intermediate,
+        nn::workload_data<nn::layout_f32>* forward_output,
+        nn::workload_data<nn::layout_f32>* backward_input,
+        nn::workload_data<nn::layout_f32>* backward_error_delta,
         uint32_t n_arg,
         float alpha,
         float beta)
@@ -301,19 +301,19 @@ namespace
 
         // execute norm backward
         nn_opaque_data_t* inputs[] = {reinterpret_cast<nn_opaque_data_t*> (forward_input)};
-        nn_opaque_data_t* outputs[] = {reinterpret_cast<nn_opaque_data_t*> (forward_output)};
+        nn_opaque_data_t* outputs[] = {reinterpret_cast<nn_opaque_data_t*> (forward_output), reinterpret_cast<nn_opaque_data_t*> (forward_intermediate)};
 
-        nn_event_t norm = primitives.backward_async(
-            primitive, 1, inputs, 0, nullptr, 1, outputs, 0, nullptr, nullptr);
+        nn_event_t back_norm = primitives.backward_async(
+            primitive, 1, inputs, 0, nullptr, 2, outputs, 0, nullptr, nullptr);
 
-        primitives.wait(1, &norm);
+        primitives.wait(1, &back_norm);
 
         // revert changes made above; TODO: remove this when device API starts using parent->delta_buffer
         forward_output->parent->delta_buffer = nullptr;
         forward_input->parent->delta_buffer = nullptr;
 
         // cleanup
-        primitives.delete_event(norm);
+        primitives.delete_event(back_norm);
         primitives.delete_primitive(primitive);
         primitives.delete_device(device);
     }
@@ -357,25 +357,26 @@ namespace
             for (uint32_t z = 0; z < input_datas[0]->size[2]; ++z)
                 for (uint32_t y = 0; y < input_datas[0]->size[1]; ++y)
                     for (uint32_t x = 0; x < input_datas[0]->size[0]; ++x)
-                        (*input_datas[0])(x, y, z, n) = 1.0f;
+                        (*input_datas[0])(x, y, z, n) = 0.5f * static_cast<float>(x + y + z + n);
 
         for (uint32_t n = 0; n < input_datas[1]->size[3]; ++n)
             for (uint32_t z = 0; z < input_datas[1]->size[2]; ++z)
                 for (uint32_t y = 0; y < input_datas[1]->size[1]; ++y)
                     for (uint32_t x = 0; x < input_datas[1]->size[0]; ++x)
-                        (*input_datas[1])(x, y, z, n) = 0.5f;
+                        (*input_datas[1])(x, y, z, n) = 0.25f * static_cast<float>(x + y + z + n);
 
         // Get refernces to all buffers used by convolution and its backprop.
         // "Inputs" to backprop.
         auto forward_input = pool_backprop->forward_item->input[0].get_data_view();
         auto forward_output = pool_backprop->forward_item->output[0];
         auto backward_input = pool_backprop->input[0].get_data_view();
+        auto forward_intermediate = pool_backprop->forward_item->output[1];
 
         // Outputs of backprop.
         auto backward_error_delta = pool_backprop->output[0];
 
         // Create reference outputs with same layout and sizes.
-        nn::workload_data<float> ref_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
+        nn::workload_data<nn::layout_f32> ref_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
 
         std::memset(ref_backward_error_delta.parent->data_buffer, 0, ref_backward_error_delta.parent->buffer_size);
 
@@ -383,23 +384,30 @@ namespace
         NN_API_STATUS status;
         EXPECT_EQ(NN_API_STATUS_OK, di.workload_execute_function(workload, (void **)input_datas, nullptr, &status));
 
+        // Create data for naive run.
+        nn::workload_data<nn::layout_f32> naive_forward_input(
+            input_datas[0]->buffer, 
+            forward_input->parent->lengths, 
+            forward_input->parent->layout);
+
         // Run naive code.
-        forward_input->parent->data_buffer = input_datas[0]->buffer;
         backward_naive(
-            static_cast<nn::workload_data<float>*>(forward_input),
-            static_cast<nn::workload_data<float>*>(forward_output),
-            static_cast<nn::workload_data<float>*>(backward_input),
+            &naive_forward_input,
+            nn::workload_data_cast<nn::layout_f32>(forward_intermediate),
+            nn::workload_data_cast<nn::layout_f32>(forward_output),
+            nn::workload_data_cast<nn::layout_f32>(backward_input),
             &ref_backward_error_delta,
             n_arg,
             0.5f,
             beta);
 
         // Run optimized code through primitive API
-        nn::workload_data<float> prim_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
+        nn::workload_data<nn::layout_f32> prim_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
         run_primitives_api(
-            static_cast<nn::workload_data<float>*>(forward_input),
-            static_cast<nn::workload_data<float>*>(forward_output),
-            static_cast<nn::workload_data<float>*>(backward_input),
+            &naive_forward_input,
+            nn::workload_data_cast<nn::layout_f32>(forward_intermediate),
+            nn::workload_data_cast<nn::layout_f32>(forward_output),
+            nn::workload_data_cast<nn::layout_f32>(backward_input),
             &prim_backward_error_delta,
             n_arg,
             0.5f,
@@ -436,21 +444,19 @@ namespace
 // Tests.
 TEST(cpu_normalization_backprop, standard_square_positive)
 {
-    for (auto batch : { 1, 8 })
-        for (auto in = 1; in < 10; in++)
+    for (auto batch : { 1, 8, 48 })
+        for (auto in = 1; in < 9; in++)
             for (auto fmaps : { 8, 16, 24 })
                 for (auto n_arg : { 3, 5, 7 })
-                    for (auto beta : { 0.75f, 0.5f })
-                        run_test(n_arg, fmaps, in, in, batch, beta, false);
+                    run_test(7, 16, 6, 6, 1, 0.75f, false);
 }
 
 TEST(cpu_normalization_backprop, standard_square_negative)
 {
-    for (auto batch : { 1, 8 })
-        for (auto in = 1; in < 10; in++)
+    for (auto batch : { 1, 8, 48 })
+        for (auto in = 1; in < 9; in++)
             for (auto fmaps : { 8, 16, 24 })
                 for (auto n_arg : { 3, 5, 7 })
-                    for (auto beta : { 0.75f, 0.5f })
-                        run_test(n_arg, fmaps, in, in, batch, beta, true);
+                    run_test(n_arg, fmaps, in, in, batch, 0.75f, true);
 }
 

@@ -27,6 +27,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <cfloat>
 #include "tester/g_ult/unit_tests/cpu/naive_implementations.h"
+#include <gtest/gtest.h>
 
 namespace
 {
@@ -90,12 +91,22 @@ bool run_work_item(
 void destroy_work_item(
     nn_workload_item* &work_item)
 {
-    work_item->input.clear();
+    for(auto& parameter : work_item->parameters)
+    {
+        delete parameter;
+        parameter = nullptr;
+    }
 
-    delete reinterpret_cast<nn::workload_data<float>*>(work_item->output[0]);
+    for(auto& output : work_item->output)
+    {
+        delete output;
+        output = nullptr;
+    }
+
+    delete work_item->primitive;
+    work_item->primitive = nullptr;
 
     delete work_item;
-
     work_item = nullptr;
 }
 
@@ -117,18 +128,18 @@ void create_and_initialize_input_item(
     work_item = new nn_workload_item();
 
     work_item->type = NN_WORK_ITEM_TYPE_INPUT;
-
+    work_item->primitive = nullptr;
     work_item->arguments.input.index = 0;
 
-    nn_workload_data_layout_t inp_out_layout = nn::workload_data<float>::layout.nxyzpq;
+    nn_workload_data_layout_t inp_out_layout = nn::layout_t<nn::layout_nxyzpq_f32>::layout;
 
-    work_item->output.push_back(new nn::workload_data<float>(in_out_coords, inp_out_layout));
+    work_item->output.push_back(new nn::workload_data<nn::layout_f32>(in_out_coords, inp_out_layout));
 
     for (uint32_t batch = 0; batch < batch_size; ++batch)
     {
         for (uint32_t input_element = 0; input_element < input_width; ++input_element)
         {
-            float value = 0.03125f;
+            float value = 10.03125f;
             value *= pow(1.01f, input_element);
             value *= pow(1.01f, batch);
             if (input_element % 2) value *= -1.0f;
@@ -162,9 +173,9 @@ void create_and_initialize_work_item(
 
     work_item->input.push_back({ input_item, 0 });
 
-    nn_workload_data_layout_t inp_out_layout = nn::workload_data<float>::layout.nxyzpq;
+    nn_workload_data_layout_t inp_out_layout = nn::layout_t<nn::layout_nxyzpq_f32>::layout;
 
-    work_item->output.push_back(new nn::workload_data<float>(in_out_coords, inp_out_layout));
+    work_item->output.push_back(new nn::workload_data<nn::layout_f32>(in_out_coords, inp_out_layout));
 
     for (uint32_t batch = 0; batch < batch_size; ++batch)
     {

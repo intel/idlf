@@ -118,9 +118,6 @@ public:
 
         this->di = _di;
 
-
-
-
         // create and populate nn:data factors (weights and biases) for successive layers
 
         workflow_layer_factor[mean_factor] = new nn::data<float>(img_size,img_size,3);
@@ -277,8 +274,8 @@ public:
             workflow_layer[norm1]->arguments.forward_normalization.normalization.k = 1; // in Krishevsky's article is 2
             workflow_layer[norm1]->arguments.forward_normalization.normalization.n = 5;
             workflow_layer[norm1]->arguments.forward_normalization.normalization.alpha = 0.0001f/5; // in Krishevsky's paper is 1e-4,
-            // but didn't write that sum of the squares
-            // is divided by number of elements (n)
+                                                                                                    // but didn't write that sum of the squares
+                                                                                                    // is divided by number of elements (n)
             workflow_layer[norm1]->arguments.forward_normalization.normalization.beta = 0.75f;
 
             workflow_layer[norm1]->output_format[0].format = NN_DATA_FORMAT_3D;

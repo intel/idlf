@@ -54,22 +54,22 @@ __kernel void fully_connected_v2(
   __global float* input, __global float* weights,  __global float* weights2, __global float* biases)
 {
     float dotProd0 = 0.0f;
-    
+
     __global float* processed_neuron_weights;
 
     if(get_global_id(0) >= WEIGHTS2_NEURON_INDEX ) {
-        processed_neuron_weights = weights2 + (get_global_id(0) - WEIGHTS2_NEURON_INDEX) * NUM_INPUTS; 
+        processed_neuron_weights = weights2 + (get_global_id(0) - WEIGHTS2_NEURON_INDEX) * NUM_INPUTS;
     } else {
-        processed_neuron_weights = weights + get_global_id(0) * NUM_INPUTS; 
+        processed_neuron_weights = weights + get_global_id(0) * NUM_INPUTS;
     }
 
-    __global float* processed_input_batch =  input + get_global_id(1) * NUM_INPUTS; 
+    __global float* processed_input_batch =  input + get_global_id(1) * NUM_INPUTS;
 
-    for(unsigned int weight_idx = 0; weight_idx < NUM_INPUTS; ++weight_idx ) 
+    for(unsigned int weight_idx = 0; weight_idx < NUM_INPUTS; ++weight_idx )
     {
         dotProd0 += processed_input_batch[weight_idx]*processed_neuron_weights[weight_idx];
     }
-#ifdef IMAGE_AS_OUTPUT 
+#ifdef IMAGE_AS_OUTPUT
     write_imagef(output,(int2)(get_global_id(0), get_global_id(1)),activation_function(dotProd0 + biases[get_global_id(0)]));
 #else
     unsigned int output_idx = get_global_id(1)*get_global_size(0) + get_global_id(0);
@@ -84,16 +84,16 @@ __kernel void fully_connected_generic(__global float* output,  __global float* i
 {
     float16 dotProd16 = (float16)(0.0f);
 
-    __global float* processed_neuron_weights = weights + get_global_id(0) * NUM_INPUTS; 
-    __global float* processed_input_batch =  input + get_global_id(1) * NUM_INPUTS; 
+    __global float* processed_neuron_weights = weights + get_global_id(0) * NUM_INPUTS;
+    __global float* processed_input_batch =  input + get_global_id(1) * NUM_INPUTS;
 
-    for(unsigned int weight_idx = 0; weight_idx < NUM_VEC16_CHUNKS; ++weight_idx ) 
+    for(unsigned int weight_idx = 0; weight_idx < NUM_VEC16_CHUNKS; ++weight_idx )
     {
         dotProd16 += vload16(weight_idx,processed_input_batch)*vload16(weight_idx,processed_neuron_weights);
     }
     float dotProd = dotProd16.s0 + dotProd16.s1 + dotProd16.s2 + dotProd16.s3 + dotProd16.s4 + dotProd16.s5 + dotProd16.s6 + dotProd16.s7 + dotProd16.s8 + dotProd16.s9 + dotProd16.sA + dotProd16.sB + dotProd16.sC + dotProd16.sD + dotProd16.sE + dotProd16.sF;
     unsigned int start_rems = NUM_VEC16_CHUNKS*16;
-    for(unsigned int weight_idx = start_rems; weight_idx < NUM_INPUTS; ++weight_idx ) 
+    for(unsigned int weight_idx = start_rems; weight_idx < NUM_INPUTS; ++weight_idx )
     {
         dotProd += processed_input_batch[weight_idx]*processed_neuron_weights[weight_idx];
     }
@@ -105,12 +105,12 @@ __kernel void fully_connected_generic(__global float* output,  __global float* i
 #ifdef INCLUDE_fully_connected_8x8
 
 
-#ifdef IMAGE_AS_OUTPUT 
-#define WRITE_TO_OUTPUT_0(value) write_imagef(output,(int2)(dst_write0_x_coord, dst_write0_y_coord),value); ++dst_write0_y_coord; 
-#define WRITE_TO_OUTPUT_1(value) write_imagef(output,(int2)(dst_write1_x_coord, dst_write1_y_coord), value); ++dst_write1_y_coord; 
-#else 
+#ifdef IMAGE_AS_OUTPUT
+#define WRITE_TO_OUTPUT_0(value) write_imagef(output,(int2)(dst_write0_x_coord, dst_write0_y_coord),value); ++dst_write0_y_coord;
+#define WRITE_TO_OUTPUT_1(value) write_imagef(output,(int2)(dst_write1_x_coord, dst_write1_y_coord), value); ++dst_write1_y_coord;
+#else
 #define WRITE_TO_OUTPUT_0(value) dst_write0[ 0 ] = value; dst_write0 += NUM_OUTPUTS;
-#define WRITE_TO_OUTPUT_1(value) dst_write1[ 0 ] = value; dst_write1 += NUM_OUTPUTS; 
+#define WRITE_TO_OUTPUT_1(value) dst_write1[ 0 ] = value; dst_write1 += NUM_OUTPUTS;
 #endif
 
 // A: batch x inputs
@@ -209,10 +209,10 @@ __kernel void fully_connected_8x8(
         //N = 16, we have 8 columns of work-items, so each work-item must load 16/8 = 2 column
         int2    coordBTemp = coordB;
 
-        float8  blockB00 = as_float8( intel_sub_group_block_read8( weights, coordBTemp ) );   
+        float8  blockB00 = as_float8( intel_sub_group_block_read8( weights, coordBTemp ) );
 
-		coordBTemp.x += 8 * sizeof(uint);
-		
+        coordBTemp.x += 8 * sizeof(uint);
+
         //We want to load atile, which is M rows x K columns
         //M = 32, we have 1 row of work-items, so each work-item must load 32/1 = 32 rows
         //K = 8, we have 8 columns of work-items, so each work-item must load 8/8 = 1 column
@@ -239,7 +239,7 @@ __kernel void fully_connected_8x8(
 #endif
 
 #if OUTPUT_TILE == 16
-        float8  blockB10 = as_float8( intel_sub_group_block_read8( weights, coordBTemp ) );   
+        float8  blockB10 = as_float8( intel_sub_group_block_read8( weights, coordBTemp ) );
 
         MULTIPLY_BLOCKS_8x8( blockC10, blockA00, blockB10 );
 #if BATCH_TILE >= 16
@@ -257,13 +257,13 @@ __kernel void fully_connected_8x8(
 #undef TRANSPOSE_BLOCK_8
 #undef MULTIPLY_BLOCKS_8x8
 
-        coordA.x += INPUT_TILE * sizeof(uint);	
-        coordB.y += INPUT_TILE;	
+        coordA.x += INPUT_TILE * sizeof(uint);
+        coordB.y += INPUT_TILE;
         w += INPUT_TILE;
     }
     while( w < NUM_INPUTS );
 
-    
+
 // TODO 1: remember to initialize biases to random numbers in ULT to make sure this is OK
 // TODO 2: remember to make sure what is perf impact of reading biases here
 
@@ -274,8 +274,8 @@ __kernel void fully_connected_8x8(
     unsigned dst_write0_y_coord = group_y * BATCH_TILE;
 
 #if OUTPUT_TILE == 16
-    const unsigned dst_write1_x_coord = dst_write0_x_coord  + ( OUTPUT_TILE / 2 );/// Is it 
-    unsigned dst_write1_y_coord = dst_write0_y_coord; 
+    const unsigned dst_write1_x_coord = dst_write0_x_coord  + ( OUTPUT_TILE / 2 );/// Is it
+    unsigned dst_write1_y_coord = dst_write0_y_coord;
     __global float  *bias1 = bias0 + ( OUTPUT_TILE / 2 );
 #endif
 
@@ -333,7 +333,7 @@ __kernel void fully_connected_8x8(
 #endif
 
 #if OUTPUT_TILE == 16
-    
+
     WRITE_TO_OUTPUT_1(activation_function(bias1[ 0 ] + blockC10.s0));
 #if BATCH_TILE > 1
     WRITE_TO_OUTPUT_1(activation_function(bias1[ 0 ] + blockC10.s1));
@@ -438,7 +438,7 @@ fully_connected_kernel_key ocl_toolkit::prepare_fully_connected_kernel(
                 ( num_batch % 8 == 0 ) &&
                 ( num_inputs*num_outputs*sizeof( float ) <= this->m_max_buffer_size ) );
     };
-    
+
     if( use_fully_connected_8x8() )
     {
         if( num_batch % 32 == 0 )
@@ -458,8 +458,8 @@ fully_connected_kernel_key ocl_toolkit::prepare_fully_connected_kernel(
             output_tile = 8;
     }
 
-    fully_connected_kernel_key fully_connected_kernel_to_use( num_inputs, num_outputs, 
-                                                              batch_tile, 
+    fully_connected_kernel_key fully_connected_kernel_to_use( num_inputs, num_outputs,
+                                                              batch_tile,
                                                               activation_function,
                                                               image_as_output);
 
@@ -495,7 +495,7 @@ fully_connected_kernel_key ocl_toolkit::prepare_fully_connected_kernel(
             break;
         }
 
-        // Should the output area be a buffer or image 
+        // Should the output area be a buffer or image
         if(image_as_output == true) {
             extra_compile_args += " -DIMAGE_AS_OUTPUT";
         }
@@ -525,10 +525,10 @@ fully_connected_kernel_key ocl_toolkit::prepare_fully_connected_kernel(
         }
 
         extra_compile_args += " -DINCLUDE_" + kernel_name;
-        
+
         DBG_PRINTF( "compiling fully_connected kernel: %s \n", kernel_name.c_str());
         //DBG_PRINTF( "compile args: %s\n", extra_compile_args.c_str( ) );
-        
+
         std::vector<std::string> kernels(1, kernel_source);
         fully_connected_kernel_variants kernel( make_kernels( kernels,
                                                               kernel_name.c_str(),
@@ -558,14 +558,14 @@ void ocl_toolkit::fully_connect( nn_cl_data            *output,
                                  uint_least32_t         input_width,
                                  uint_least32_t         input_height,
                                  uint_least32_t         input_depth,
-                                 uint_least32_t         total_num_weights,      
+                                 uint_least32_t         total_num_weights,
                                  uint_least32_t         num_batches,
                                  NN_ACTIVATION_FUNCTION activation_function )
 {
     auto num_inputs = input_width*input_height*input_depth;
     // Get Kernel for a job
     auto kit =
-        m_fully_connected_kernels.find( prepare_fully_connected_kernel( 
+        m_fully_connected_kernels.find( prepare_fully_connected_kernel(
                             output->parent->cl_buffer[0] == nullptr,  // If no buffer exist than use image
                             num_inputs, num_outputs, num_batches, activation_function));
     // If needed kernel was not there then its creation failed for some reason
@@ -612,7 +612,7 @@ void ocl_toolkit::fully_connect( nn_cl_data            *output,
         local_size = { 8, 1, 1 };
 
     }
-    else 
+    else
     {
         // Set input and output as args of OpenCL fully_connected kernel
         retVal = ( kit->second ).m_kernel->setArg( 1, *input->parent->cl_buffer[0] );
@@ -621,7 +621,7 @@ void ocl_toolkit::fully_connect( nn_cl_data            *output,
             THROW_ERROR( retVal, " Error setting OpenCL fully_connected kernel argument idx: 1 failed with error: " );
         }
 
-        if( total_num_weights*sizeof( float ) > m_max_buffer_size ) 
+        if( total_num_weights*sizeof( float ) > m_max_buffer_size )
         {
             retVal = ( kit->second ).m_kernel->setArg( 2, *filter->parent->cl_buffer[0]);
             if( retVal != CL_SUCCESS )
@@ -655,12 +655,12 @@ void ocl_toolkit::fully_connect( nn_cl_data            *output,
                 THROW_ERROR(retVal, " Error setting OpenCL fully_connected kernel argument idx: 3 failed with error: ");
             }
         }
-        
+
         global_size = { num_outputs, num_batches };
     }
-    
+
     //DBG_PRINTF("GWS: %u %u \n", global_size[0], global_size[1], 1);
-    
+
 #if defined(DEBUG)
     // data is  dynamically allocated
     // and pointer to it is passed to as data to callback mechanism
@@ -677,7 +677,7 @@ void ocl_toolkit::fully_connect( nn_cl_data            *output,
 
     if( retVal != CL_SUCCESS )
     {
-        THROW_ERROR(retVal, 
+        THROW_ERROR(retVal,
                          " Error executing OpenCL enqueueNDRange for fully_connected kernel. Call failed with error: " );
     }
 }

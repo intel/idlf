@@ -40,8 +40,8 @@ namespace device_gpu
 //TODO:  consider vectorization of this code
 // First each local work_item is reading some of values
 // TODO: Change a , b to be compile time defines
-static std::string kernelSource = R"( 
-//build options: -DCOEFF_A, -DCOEFF_B 
+static std::string kernelSource = R"(
+//build options: -DCOEFF_A, -DCOEFF_B
 __kernel void norm_linear_single(__global float* output,  __global float* input)
 {
     // Calculate offset of data (input and corressponding output) to be processed
@@ -63,25 +63,25 @@ __kernel void norm_linear_single(__global float* output,  __global float* input)
 bool operator < ( const norm_linear_single_kernel_key &A, const norm_linear_single_kernel_key &B )
 {
 
-    if( A.m_conv_to_perform < B.m_conv_to_perform ) 
+    if( A.m_conv_to_perform < B.m_conv_to_perform )
     {
         return true;
     }
 
-    if( ( A.m_conv_to_perform == B.m_conv_to_perform ) && 
+    if( ( A.m_conv_to_perform == B.m_conv_to_perform ) &&
         ( A.m_total_input_width < B.m_total_input_width ) )
     {
         return true;
     }
 
-    if( ( A.m_conv_to_perform == B.m_conv_to_perform ) && 
+    if( ( A.m_conv_to_perform == B.m_conv_to_perform ) &&
         ( A.m_total_input_width == B.m_total_input_width ) &&
         ( A.m_total_input_height < B.m_total_input_height )  )
     {
         return true;
     }
 
-    if( ( A.m_conv_to_perform == B.m_conv_to_perform ) && 
+    if( ( A.m_conv_to_perform == B.m_conv_to_perform ) &&
         ( A.m_total_input_width == B.m_total_input_width ) &&
         ( A.m_total_input_height == B.m_total_input_height ) &&
         ( A.m_total_input_depth < B.m_total_input_depth )  )
@@ -103,8 +103,8 @@ bool operator < ( const norm_linear_single_kernel_key &A, const norm_linear_sing
        ( A.m_total_input_width == B.m_total_input_width ) &&
        ( A.m_total_input_height == B.m_total_input_height ) &&
        ( A.m_total_input_depth == B.m_total_input_depth ) &&
-       ( A.m_coeff_a == B.m_coeff_a ) && 
-       ( A.m_coeff_b < B.m_coeff_b ) ) 
+       ( A.m_coeff_a == B.m_coeff_a ) &&
+       ( A.m_coeff_b < B.m_coeff_b ) )
     {
         return true;
     }
@@ -249,7 +249,7 @@ void ocl_toolkit::norm_linear_single(
     // and pointer to it is passed to as data to callback mechanism
     // after using callback function will free dynamic allocation
     exec_struct *psc = new exec_struct;
-    psc->name ="norm_linear_single" ; 
+    psc->name ="norm_linear_single" ;
     psc->num_fmads  = num_input_feature_maps * input_feature_map_width * input_feature_map_height * num_batches;
     psc->time_event = new cl::Event;
     retVal = m_queue->enqueueNDRangeKernel(*( kit->second ),

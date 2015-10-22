@@ -40,7 +40,7 @@ namespace device_gpu
 {
 //TODO: Make softmax kernel more optimal
 // First each local work_item is reading some of values
-static std::string kernelSource = R"( 
+static std::string kernelSource = R"(
 //Input dimensions, softmax window size passed via compiler definition
 //build options: -DLWS -DNUM_SAMPLES -DNUM_BATCHES
 __kernel __attribute__((reqd_work_group_size(LWS, 1, 1))) void softmax(__global float* output,  __global float* input)
@@ -48,7 +48,7 @@ __kernel __attribute__((reqd_work_group_size(LWS, 1, 1))) void softmax(__global 
     unsigned int batch_offset = (get_global_id(0) / NUM_SAMPLES)* NUM_SAMPLES;
     float sum = 0.0f;
     for(unsigned int i = 0; i< NUM_SAMPLES; ++i) {
-       sum += exp(input[i + batch_offset]); 
+       sum += exp(input[i + batch_offset]);
     }
     output[get_global_id(0)] = exp(input[get_global_id(0)])/sum;
 }
@@ -56,12 +56,12 @@ __kernel __attribute__((reqd_work_group_size(LWS, 1, 1))) void softmax(__global 
 __kernel __attribute__((reqd_work_group_size(LWS, 1, 1))) void softmax_opt(__global float* output,  __global float* input)
 {
     float sum = 0.0f;
-    __local float partial_sums[LWS]; 
+    __local float partial_sums[LWS];
     unsigned long batch_offset = (get_global_id(0) / (NUM_SAMPLES - REM_WORK))*NUM_SAMPLES;
     unsigned long gid = get_global_id(0) % (NUM_SAMPLES - REM_WORK);
     unsigned long base_idx =  batch_offset + get_local_id(0)*WORK_PER_KERNEL;
     for(unsigned long e = base_idx ; e < base_idx + WORK_PER_KERNEL; ++e) {
-        sum += exp(input[e]); 
+        sum += exp(input[e]);
     }
 #if REM_WORK != 0
     if(get_local_id(0) < REM_WORK) {
@@ -218,7 +218,7 @@ void ocl_toolkit::softmax( nn_cl_data    *output,
     // and pointer to it is passed to as data to callback mechanism
     // after using callback function will free dynamic allocation
     exec_struct *psc = new exec_struct;
-    psc->name = "softmax"; 
+    psc->name = "softmax";
     psc->num_fmads = 0; //No theretical value yet
     psc->time_event = new cl::Event;
     retVal = m_queue->enqueueNDRangeKernel( *( kit->second ).m_kernel, offset,

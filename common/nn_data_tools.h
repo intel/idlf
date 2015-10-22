@@ -34,6 +34,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <string>
 #include <vector>
 
+typedef struct nn_training_descriptor_s
+{
+    nn::data<float, 4>* images;
+    nn::data<int32_t, 2>* labels;
+} nn_training_descriptor_t;
+
 #pragma pack(push,1)   /* The data has been redefined (alignment 4), so the pragma pack is not necessary,
                           but who knows if in the future, the compiler does not align to 8?  */
 typedef struct nn_data_file_head_s {
@@ -59,16 +65,43 @@ nn::data<float>* nn_data_load_from_file( std::string filename );
 
 nn::data<float> *nn_data_load_from_file_time_measure(std::string filename,std::string note="");
 
-nn::data<float, 3>* nn_data_load_from_image(std::string filename, 
-                                            uint16_t  std_size, 
-                                            fi::prepare_image_t image_process, 
+nn::data<float, 3>* nn_data_load_from_image(std::string filename,
+                                            uint32_t  std_size,
+                                            fi::prepare_image_t image_process,
                                             bool RGB_order=true);
 
 nn::data<float, 4>* nn_data_load_from_image_list(std::vector<std::string> *filelist,
+                                                 uint32_t std_size,
+                                                 fi::prepare_image_t image_process,
+                                                 uint32_t batching_size,
+                                                 bool RGB_order=true);
+
+nn::data<float, 4>* nn_data_load_from_image_list_with_padding(std::vector<std::string> *filelist,
                                                  uint16_t std_size,
                                                  fi::prepare_image_t image_process,
                                                  uint16_t batching_size,
-                                                 bool RGB_order=true);
+                                                 const size_t output_padding_left,
+                                                 const size_t output_padding_right,
+                                                 const size_t output_padding_top,
+                                                 const size_t output_padding_bottom,
+                                                 bool RGB_order = true);
+
+nn_training_descriptor_t get_directory_train_images_and_labels(
+                                                std::string images_path,
+                                                fi::prepare_image_t image_process,
+                                                uint32_t std_size,
+                                                uint32_t batch,
+                                                bool RGB_order);
+
+nn_training_descriptor_t get_directory_val_images_and_labels(
+                                                std::string images_path,
+                                                fi::prepare_image_t image_process,
+                                                uint32_t std_size,
+                                                uint32_t batch,
+                                                bool RGB_order);
+
+nn::data<int32_t, 2>*  nn_data_load_from_label_list(std::vector<int32_t>*  labels,
+                                                  uint32_t batching_size);
 
 nn::data<float>* nn_data_extend_weights_by_padding( nn::data<float>* weights, uint32_t extended_num_input_feature_maps, uint32_t extended_num_output_feature_maps);
 nn::data<float>* nn_data_extend_biases_by_padding( nn::data<float>* biases, uint32_t required_num_outputs);
@@ -82,9 +115,9 @@ void nn_data_convert_float_to_int32_fixedpoint(nn::data<float> *in,
                                                float scale);
 
 nn::data<float, 4> *nn_data_load_from_image_list_for_int16(std::vector<std::string> *filelist,
-                                                           uint16_t std_size,
-                                                           uint16_t batching_size);
+                                                           uint32_t std_size,
+                                                           uint32_t batching_size);
 void nn_data_load_images_and_labels_from_mnist_files( nn::data< float, 3 >* &images,
-                                                      nn::data< char, 1 >* &labels, 
-                                                      std::string &mnist_images, 
+                                                      nn::data< char, 1 >* &labels,
+                                                      std::string &mnist_images,
                                                       std::string &mnist_labels );

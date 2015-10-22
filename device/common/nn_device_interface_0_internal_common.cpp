@@ -29,6 +29,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cstring>
 #include <cassert>
 
+bool operator ==(const nn_workflow_use_descriptor& left, const nn_workflow_use_descriptor& right)
+{
+    return (left.item == right.item) && (left.index == right.index);
+}
+
 /* create empty workflow */
 NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_create_0_function(
     nn_workflow_t *    *workflow,       /* workflow to be created */
@@ -167,6 +172,7 @@ NN_API_STATUS NN_API_CALL_CONVENTION nn_workflow_item_delete_0_function(
                 *const_cast<nn_workflow_use_descriptor_t **>(&use_item->input) = input;
                 *const_cast<uint32_t *>(&use_item->input_count)                = input_count;
             }
+            delete[] item->output_format;
             delete[] item->input;
             delete[] item->use;
             delete[] reinterpret_cast<uint8_t *>(item);

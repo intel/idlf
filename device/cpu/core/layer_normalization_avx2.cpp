@@ -80,7 +80,7 @@ void normalization_compute_block_linear_single(
     // arguments matching will remove all conditions in this code.
     __m256  acc0, acc1, acc2, acc3, acc4,
             acc5, acc6, acc7, acc8, acc9,
-            acc10, acc11, acc12, acc13, acc14, acc15;
+            acc10, acc11, acc12, acc13, acc14;
 
     // Load inputs.
     if (T_SIZE >=  1)  acc0 = _mm256_loadu_ps(input_ptr +  0 * C_batch_size);
@@ -138,7 +138,7 @@ void normalization_compute_block_linear_single(
 }
 
 void normalization_elementwise_linear_f32::run_normalization_work_item_linear_single_batch8(
-    const nn::workload_data<float> *input_view, nn::workload_data<float> *output_view) {
+    const nn::workload_data<> *input_view, nn::workload_data<> *output_view) {
     const auto input_width = input_view->parent->lengths.t[NN_DATA_COORD_x];
     const auto output_width = output_view->view_end.t[NN_DATA_COORD_x] - output_view->view_begin.t[NN_DATA_COORD_x] + 1;
 
@@ -184,7 +184,7 @@ void normalization_elementwise_linear_f32::run_normalization_work_item_linear_si
 }
 
 void normalization_elementwise_linear_f32::run_normalization_work_item_linear_single_batch8X(
-    const nn::workload_data<float> *input_view, nn::workload_data<float> *output_view) {
+    const nn::workload_data<> *input_view, nn::workload_data<> *output_view) {
     const auto BatchSize = output_view->parent->lengths.t[NN_DATA_COORD_n];
     const auto NoBatches = BatchSize / C_batch_size;
 
@@ -252,7 +252,7 @@ void normalization_compute_subsimd_linear_single(
 }
 
 void normalization_elementwise_linear_f32::run_normalization_work_item_linear_single_latency(
-    const nn::workload_data<float> *input_view, nn::workload_data<float> *output_view) {
+    const nn::workload_data<> *input_view, nn::workload_data<> *output_view) {
 
     const auto input_width = input_view->parent->lengths.t[NN_DATA_COORD_x];
     const auto output_width = output_view->view_end.t[NN_DATA_COORD_x] - output_view->view_begin.t[NN_DATA_COORD_x] + 1;
@@ -311,7 +311,7 @@ void normalization_elementwise_linear_f32::run_normalization_work_item_linear_si
 }
 
 void normalization_elementwise_linear_f32::choose_normalization_work_item_linear_single_batching_mode(
-    const nn::workload_data<float> *input_view, nn::workload_data<float> *output_view) {
+    const nn::workload_data<> *input_view, nn::workload_data<> *output_view) {
     auto batch_size = input_view->parent->lengths.t[NN_DATA_COORD_n];
     switch (batch_size)
     {
@@ -335,8 +335,8 @@ void normalization_elementwise_linear_f32::choose_normalization_work_item_linear
 
 struct normalization_elementwise_linear_f32_request_handle {
     normalization_elementwise_linear_f32 *primitive;
-    const nn::workload_data<float> *input_view;
-    nn::workload_data<float> *output_view;
+    const nn::workload_data<> *input_view;
+    nn::workload_data<> *output_view;
 };
 
 void unpack_1d_normalization_callback_handle(
@@ -348,7 +348,7 @@ void unpack_1d_normalization_callback_handle(
 }
 
 void normalization_elementwise_linear_f32::run_multithreaded_1d_normalization_work_item(
-    const nn::workload_data<float> *input, nn::workload_data<float> *output) {
+    const nn::workload_data<> *input, nn::workload_data<> *output) {
     auto num_hardware_threads = std::min(static_cast<decltype(device->thread_pool.get_num_threads())>(18), device->thread_pool.get_num_threads());
 
     const auto item_view_length =
@@ -371,8 +371,8 @@ void normalization_elementwise_linear_f32::run_multithreaded_1d_normalization_wo
 
         // Full cores utilization version.
         std::vector<normalization_elementwise_linear_f32_request_handle> request_handles(num_hardware_threads);
-        std::vector<const nn::workload_data<float> *> input_views(num_hardware_threads);
-        std::vector<nn::workload_data<float> *> output_views(num_hardware_threads);
+        std::vector<const nn::workload_data<> *> input_views(num_hardware_threads);
+        std::vector<nn::workload_data<> *> output_views(num_hardware_threads);
 
         uint32_t* thread_items_sums = static_cast<uint32_t*>(alloca(num_hardware_threads * sizeof(uint32_t)));
 
@@ -428,9 +428,9 @@ void normalization_elementwise_linear_f32::run_multithreaded_1d_normalization_wo
                 input->get_length(NN_DATA_COORD_q) - 1
             };
 
-            input_views[thread_id] = new nn::workload_data<float>(*input, nn_view_begin, nn_view_end);
+            input_views[thread_id] = new nn::workload_data<>(*input, nn_view_begin, nn_view_end);
 
-            output_views[thread_id] = new nn::workload_data<float>(*output, nn_view_begin, nn_view_end);
+            output_views[thread_id] = new nn::workload_data<>(*output, nn_view_begin, nn_view_end);
         }
 
         // Run threads.
@@ -457,8 +457,8 @@ void normalization_elementwise_linear_f32::run_multithreaded_1d_normalization_wo
     }
 }
 
-void normalization_elementwise_linear_f32::forward(const nn::workload_data<float> *input,
-                                                   nn::workload_data<float> *output) {
+void normalization_elementwise_linear_f32::forward(const nn::workload_data<> *input,
+                                                   nn::workload_data<> *output) {
     nn_workload_data_coords_t in_out_view_coords =
     {
         input->parent->lengths.t[NN_DATA_COORD_n],
@@ -469,10 +469,10 @@ void normalization_elementwise_linear_f32::forward(const nn::workload_data<float
         1
     };
 
-    nn_workload_data_layout_t in_out_view_layout = nn::workload_data<float>::layout.nxyzpq;
+    nn_workload_data_layout_t in_out_view_layout = nn::layout_t<nn::layout_nxyzpq_f32>::layout;
 
-    nn::workload_data<float>* input_view = new nn::workload_data<float>(NN_WORKLOAD_DATA_TAG_UNKNOWN, input->parent->data_buffer, in_out_view_coords, in_out_view_layout);
-    nn::workload_data<float>* output_view = new nn::workload_data<float>(NN_WORKLOAD_DATA_TAG_UNKNOWN, output->parent->data_buffer, in_out_view_coords, in_out_view_layout);
+    nn::workload_data<>* input_view = new nn::workload_data<>(NN_WORKLOAD_DATA_TAG_UNKNOWN, input->parent->data_buffer, in_out_view_coords, in_out_view_layout);
+    nn::workload_data<>* output_view = new nn::workload_data<>(NN_WORKLOAD_DATA_TAG_UNKNOWN, output->parent->data_buffer, in_out_view_coords, in_out_view_layout);
 
     if (device->thread_pool.get_num_threads() > 1)
     {
@@ -493,8 +493,8 @@ void normalization_elementwise_linear_f32::forward(const std::vector<const nn_wo
     assert(parameters.size() == 0);
     assert(outputs.size() == 1);
 
-    forward(reinterpret_cast<const nn::workload_data<float> *>(inputs[0]),
-            reinterpret_cast<nn::workload_data<float> *>(outputs[0]));
+    forward(nn::workload_data_cast<>(inputs[0]),
+            reinterpret_cast<nn::workload_data<> *>(outputs[0]));
 }
 
 __m256 _inner_mm256_invpow075_ps(__m256 arg)
@@ -502,7 +502,7 @@ __m256 _inner_mm256_invpow075_ps(__m256 arg)
     __m256i e = _mm256_slli_epi32(
                     _mm256_sub_epi32(
                         _mm256_and_si256(
-                            _mm256_castps_si256(arg), 
+                            _mm256_castps_si256(arg),
                             _mm256_set1_epi32(0x7f800000)),
                         _mm256_set1_epi32(0x3f800000)),
                     1);
@@ -522,21 +522,21 @@ __m256 _inner_mm256_invpow075_ps(__m256 arg)
 
     __m256 p1 = _mm256_blendv_ps(
                     _mm256_set1_ps(0.59460355750136053335874998528f),
-                    _mm256_set1_ps(1.0f), 
+                    _mm256_set1_ps(1.0f),
                     _mm256_castsi256_ps(
                         _mm256_cmpeq_epi32(
                             _mm256_and_si256(
-                                e, 
+                                e,
                                 _mm256_set1_epi32(1<<24)),
                             _mm256_set1_epi32(0))));
 
     __m256 p2 = _mm256_blendv_ps(
                     _mm256_set1_ps(0.35355339059327376220042218105f),
-                    _mm256_set1_ps(1.0f), 
+                    _mm256_set1_ps(1.0f),
                     _mm256_castsi256_ps(
                         _mm256_cmpeq_epi32(
                             _mm256_and_si256(
-                                e, 
+                                e,
                                 _mm256_set1_epi32(2<<24)),
                             _mm256_set1_epi32(0))));
 
@@ -554,20 +554,36 @@ __m256 _inner_mm256_invpow075_ps(__m256 arg)
     intermediate_result = _mm256_fmadd_ps(arg, intermediate_result, _mm256_set1_ps(-4.79039952143706f));
     intermediate_result = _mm256_fmadd_ps(arg, intermediate_result, _mm256_set1_ps(3.18069569544757f));
 
-    intermediate_result = 
+    intermediate_result =
         _mm256_mul_ps(
                 _mm256_mul_ps(
-                    p0, 
+                    p0,
                     p1),
                 _mm256_mul_ps(
-                    p2, 
+                    p2,
                     intermediate_result));
 
     return intermediate_result;
 }
 
-void normalization_response_across_maps_f32::run_3d_normalization_work_item(const nn::workload_data<float> *input_view,
-                                                                            nn::workload_data<float> *output_view) {
+enum EXP_APPROX
+{
+    APPROX_NEGATIVE_0_75,
+};
+
+template<EXP_APPROX T_approx> __m256 _internal_mm256_pow_ps                (__m256 base, __m256 exponent);
+template<>                    __m256 _internal_mm256_pow_ps<APPROX_NEGATIVE_0_75>   (__m256 base, __m256 exponent) {return _inner_mm256_invpow075_ps(base);}
+
+template<EXP_APPROX T_approx, bool T_emit_intermediates>
+void run_3d_normalization_work_item_template(
+    const nn::workload_data<> *input_view,
+    nn::workload_data<> *intermediate_data,
+    nn::workload_data<> *output_view,
+    uint32_t n,
+    float alpha,
+    uint32_t k,
+    float beta)
+{
     const auto input_column_size = input_view->parent->lengths.t[NN_DATA_COORD_z];
     const auto input_row_size = input_view->parent->lengths.t[NN_DATA_COORD_x] * input_column_size;
     const auto input_batch_size = input_view->parent->lengths.t[NN_DATA_COORD_y] * input_row_size;
@@ -578,6 +594,7 @@ void normalization_response_across_maps_f32::run_3d_normalization_work_item(cons
 
     auto input_buffer = static_cast<float*>(input_view->parent->data_buffer);
     auto output_buffer = static_cast<float*>(output_view->parent->data_buffer);
+    auto intermediate_buffer = (T_emit_intermediates) ? static_cast<float*>(intermediate_data->parent->data_buffer) : nullptr;
 
     // Const data.
     const uint32_t permutation_mask[8] = { 1, 2, 3, 4, 5, 6, 7, 0 };
@@ -597,25 +614,32 @@ void normalization_response_across_maps_f32::run_3d_normalization_work_item(cons
     const __m256i first_masker = _mm256_loadu_si256((__m256i*)first_load_mask);
     const __m256i last_masker = _mm256_loadu_si256((__m256i*)last_load_mask);
 
-    for (uint32_t batch = input_view->view_begin.t[NN_DATA_COORD_n]; batch <= input_view->view_end.t[NN_DATA_COORD_n]; ++batch)
+    const __m256 pow_vec = _mm256_set1_ps(-beta);
+
+    for (uint32_t batch = output_view->view_begin.t[NN_DATA_COORD_n]; batch <= output_view->view_end.t[NN_DATA_COORD_n]; ++batch)
     {
-        for (uint32_t row = input_view->view_begin.t[NN_DATA_COORD_y], out_row = output_view->view_begin.t[NN_DATA_COORD_y]; 
-             row <= input_view->view_end.t[NN_DATA_COORD_y]; 
+        for (uint32_t row = input_view->view_begin.t[NN_DATA_COORD_y], out_row = output_view->view_begin.t[NN_DATA_COORD_y];
+             out_row <= output_view->view_end.t[NN_DATA_COORD_y];
              ++row, ++out_row)
         {
-            for (uint32_t column = input_view->view_begin.t[NN_DATA_COORD_x], out_column = output_view->view_begin.t[NN_DATA_COORD_x]; 
-                 column <= input_view->view_end.t[NN_DATA_COORD_x]; 
+            for (uint32_t column = input_view->view_begin.t[NN_DATA_COORD_x], out_column = output_view->view_begin.t[NN_DATA_COORD_x];
+                 out_column <= output_view->view_end.t[NN_DATA_COORD_x];
                  ++column, ++out_column)
             {
                 const auto input_address = &input_buffer[batch*input_batch_size + row*input_row_size + column*input_column_size];
                 const auto output_address = &output_buffer[batch*output_batch_size + out_row*output_row_size + out_column*output_column_size];
+                const auto intermediate_address =
+                    (T_emit_intermediates)
+                    ? &intermediate_buffer[batch*output_batch_size + out_row*output_row_size + out_column*output_column_size]
+                    : nullptr;
 
                 // Prepare first data chunk.
                 __m256 source_tmp = _mm256_maskload_ps(input_address - neighbourhood, first_masker);
                 source_tmp = _mm256_mul_ps(source_tmp, source_tmp);
 
-                for (uint32_t feature_map = input_view->view_begin.t[NN_DATA_COORD_z], out_feature_map = output_view->view_begin.t[NN_DATA_COORD_z]; 
-                     feature_map <= input_view->view_end.t[NN_DATA_COORD_z];
+                #pragma forceinline recursive
+                for (uint32_t feature_map = input_view->view_begin.t[NN_DATA_COORD_z], out_feature_map = output_view->view_begin.t[NN_DATA_COORD_z];
+                     out_feature_map <= output_view->view_end.t[NN_DATA_COORD_z];
                      feature_map += C_simd_width, out_feature_map += C_simd_width)
                 {
                     // Initialize accumulator.
@@ -623,9 +647,9 @@ void normalization_response_across_maps_f32::run_3d_normalization_work_item(cons
 
                     // Move previous saved chunk to first and load new one as a next.
                     __m256 source_first = source_tmp;
-                    __m256 source_second = 
+                    __m256 source_second =
                         (feature_map + C_simd_width <= input_view->view_end.t[NN_DATA_COORD_z])
-                            ? _mm256_loadu_ps(input_address + feature_map - neighbourhood + C_simd_width) 
+                            ? _mm256_loadu_ps(input_address + feature_map - neighbourhood + C_simd_width)
                             : _mm256_maskload_ps(input_address + feature_map - neighbourhood + C_simd_width, last_masker);
 
                     // Square of new chunk and save for next iteration.
@@ -646,8 +670,14 @@ void normalization_response_across_maps_f32::run_3d_normalization_work_item(cons
                     // Do k + alpha * acc.
                     acc = _mm256_fmadd_ps(acc, _mm256_set1_ps(alpha), _mm256_set1_ps(k));
 
-                    // Magic happens here. (acc^-0.75)
-                    acc = _inner_mm256_invpow075_ps(acc);
+                    if(T_emit_intermediates)
+                    {
+                        // Store this for later backprop use.
+                        _mm256_stream_ps(intermediate_address + out_feature_map, acc);
+                    }
+
+                    // acc ^ -beta
+                    acc = _internal_mm256_pow_ps<T_approx>(acc, pow_vec);
 
                     // Multiply with input data.
                     acc = _mm256_mul_ps(acc, source_raw);
@@ -660,39 +690,88 @@ void normalization_response_across_maps_f32::run_3d_normalization_work_item(cons
     }
 }
 
+void normalization_response_across_maps_f32::run_3d_normalization_work_item(
+    const nn::workload_data<> *input_view,
+    nn::workload_data<> *output_view,
+    nn::workload_data<> *intermediate_output)
+{
+    if(beta == 0.75f)
+    {
+        // Fast approximated exponent = -0.75.
+
+        if(intermediate_output != nullptr)
+        {
+            run_3d_normalization_work_item_template<APPROX_NEGATIVE_0_75, true>(
+                    input_view,
+                    intermediate_output,
+                    output_view,
+                    n,
+                    alpha,
+                    k,
+                    beta);
+        }
+        else
+        {
+            run_3d_normalization_work_item_template<APPROX_NEGATIVE_0_75, false>(
+                    input_view,
+                    intermediate_output,
+                    output_view,
+                    n,
+                    alpha,
+                    k,
+                    beta);
+        }
+    }
+    else
+    {
+        assert(0); // TODO
+    }
+}
+
 struct normalization_response_across_maps_f32_request_handle {
     normalization_response_across_maps_f32 *primitive;
-    const nn::workload_data<float> *input_view;
-    nn::workload_data<float> *output_view;
+    const nn::workload_data<> *input_view;
+    nn::workload_data<> *output_view;
+    nn::workload_data<> *intermediate_output_view;
 };
 
 struct normalization_response_across_maps_f32_backward_request_handle {
     normalization_response_across_maps_f32 *primitive;
-    const nn::workload_data<float> *forward_input;
-    const nn::workload_data<float> *forward_output;
-    const nn::workload_data<float> *backward_input;
-    nn::workload_data<float> *backward_output;
+    const nn::workload_data<> *forward_input;
+    const nn::workload_data<> *forward_intermediate_data;
+    const nn::workload_data<> *forward_output;
+    const nn::workload_data<> *backward_input;
+    nn::workload_data<> *backward_output;
 };
 
 void unpack_3d_normalization_callback_handle(
     void* void_handle)
 {
     auto handle = reinterpret_cast<normalization_response_across_maps_f32_request_handle *>(void_handle);
-    handle->primitive->run_3d_normalization_work_item(handle->input_view, handle->output_view);
+    handle->primitive->run_3d_normalization_work_item(
+        handle->input_view,
+        handle->output_view,
+        handle->intermediate_output_view);
 }
 
 void unpack_3d_normalization_callback_handle_backward(
     void* void_handle)
 {
     auto handle = reinterpret_cast<normalization_response_across_maps_f32_backward_request_handle *>(void_handle);
-    handle->primitive->backward(handle->forward_input, handle->forward_output, handle->backward_input, handle->backward_output);
+    handle->primitive->backward(
+        handle->forward_input,
+        handle->forward_intermediate_data,
+        handle->forward_output,
+        handle->backward_input,
+        handle->backward_output);
 }
 
 void normalization_response_across_maps_f32::dispatch_backward(
-    const nn::workload_data<float> *forward_input,
-    const nn::workload_data<float> *forward_output,
-    const nn::workload_data<float> *backward_input,
-    nn::workload_data<float> *backward_output)
+    const nn::workload_data<> *forward_input,
+    const nn::workload_data<> *forward_intermediate_data,
+    const nn::workload_data<> *forward_output,
+    const nn::workload_data<> *backward_input,
+    nn::workload_data<> *backward_output)
 {
     const auto num_batch_items =
         (backward_output->view_end.t[NN_DATA_COORD_n] - backward_output->view_begin.t[NN_DATA_COORD_n] + 1);
@@ -702,12 +781,12 @@ void normalization_response_across_maps_f32::dispatch_backward(
     if (device->thread_pool.get_num_threads() < 2 || total_workers < 2)
     {
         // Its tiny data or there is only one thread available - just do it singlethreaded way.
-        backward(forward_input, forward_output, backward_input, backward_output);
+        backward(forward_input, forward_intermediate_data, forward_output, backward_input, backward_output);
     }
     else
     {
         // Full cores utilization version.
-        std::vector<nn::workload_data<float> *> backprop_output_delta_views(total_workers);
+        std::vector<nn::workload_data<> *> backprop_output_delta_views(total_workers);
 
         // Fill slave work items.
 
@@ -736,7 +815,7 @@ void normalization_response_across_maps_f32::dispatch_backward(
             };
 
             backprop_output_delta_views[item_in_pool] =
-                new nn::workload_data<float>(*backward_output, output_view_begin, output_view_end);
+                new nn::workload_data<>(*backward_output, output_view_begin, output_view_end);
         }
 
         // Run threads.
@@ -747,6 +826,7 @@ void normalization_response_across_maps_f32::dispatch_backward(
         {
             request_handles[item_in_pool].primitive = this;
             request_handles[item_in_pool].forward_input = forward_input;
+            request_handles[item_in_pool].forward_intermediate_data = forward_intermediate_data;
             request_handles[item_in_pool].forward_output = forward_output;
             request_handles[item_in_pool].backward_input = backward_input;
             request_handles[item_in_pool].backward_output = backprop_output_delta_views[item_in_pool];
@@ -767,7 +847,10 @@ void normalization_response_across_maps_f32::dispatch_backward(
 }
 
 void normalization_response_across_maps_f32::run_multithreaded_3d_normalization_work_item(
-    const nn::workload_data<float> *input, nn::workload_data<float> *output) {
+    const nn::workload_data<> *input,
+    nn::workload_data<> *output,
+    nn::workload_data<> *intermediate_output)
+{
     auto num_hardware_threads = std::min(device->thread_pool.get_num_threads(), max_threads);
 
     const auto item_view_length =
@@ -780,7 +863,7 @@ void normalization_response_across_maps_f32::run_multithreaded_3d_normalization_
     if (items_per_thread == 0 && items_modulo < 2)
     {
         // Its tiny data - just do it singlethreaded way.
-        run_3d_normalization_work_item(input, output);
+        run_3d_normalization_work_item(input, output, intermediate_output);
     }
     else
     {
@@ -790,8 +873,8 @@ void normalization_response_across_maps_f32::run_multithreaded_3d_normalization_
             num_hardware_threads = items_modulo;
 
         std::vector<normalization_response_across_maps_f32_request_handle> request_handles(num_hardware_threads);
-        std::vector<const nn::workload_data<float> *> input_views(num_hardware_threads);
-        std::vector<nn::workload_data<float> *> output_views(num_hardware_threads);
+        std::vector<const nn::workload_data<> *> input_views(num_hardware_threads);
+        std::vector<nn::workload_data<> *> output_views(num_hardware_threads);
 
         uint32_t* thread_items_sums = static_cast<uint32_t*>(alloca(num_hardware_threads * sizeof(uint32_t)));
 
@@ -847,9 +930,8 @@ void normalization_response_across_maps_f32::run_multithreaded_3d_normalization_
                 input->get_length(NN_DATA_COORD_q) - 1
             };
 
-            input_views[thread_id] = new nn::workload_data<float>(*input, nn_view_begin, nn_view_end);
-
-            output_views[thread_id] = new nn::workload_data<float>(*output, nn_view_begin, nn_view_end);
+            input_views[thread_id] = new nn::workload_data<>(*input, nn_view_begin, nn_view_end);
+            output_views[thread_id] = new nn::workload_data<>(*output, nn_view_begin, nn_view_end);
         }
 
         // Run threads.
@@ -860,6 +942,7 @@ void normalization_response_across_maps_f32::run_multithreaded_3d_normalization_
             request_handles[thread_id].primitive = this;
             request_handles[thread_id].input_view = input_views[thread_id];
             request_handles[thread_id].output_view = output_views[thread_id];
+            request_handles[thread_id].intermediate_output_view = intermediate_output;
 
             job[thread_id].callback = unpack_3d_normalization_callback_handle;
             job[thread_id].request_handle = &request_handles[thread_id];
@@ -878,13 +961,18 @@ void normalization_response_across_maps_f32::run_multithreaded_3d_normalization_
     }
 }
 
-void normalization_response_across_maps_f32::forward(const nn::workload_data<float> *input,
-                                                     nn::workload_data<float> *output) {
-    if (device->thread_pool.get_num_threads() > 1) {
-        run_multithreaded_3d_normalization_work_item(input, output);
+void normalization_response_across_maps_f32::forward(
+    const nn::workload_data<> *input,
+    nn::workload_data<> *output,
+    nn::workload_data<> *intermediate_output)
+{
+    if (device->thread_pool.get_num_threads() > 1)
+    {
+        run_multithreaded_3d_normalization_work_item(input, output, intermediate_output);
     }
-    else {
-        run_3d_normalization_work_item(input, output);
+    else
+    {
+        run_3d_normalization_work_item(input, output, intermediate_output);
     }
 }
 
@@ -892,142 +980,30 @@ void normalization_response_across_maps_f32::forward(const std::vector<const nn_
 {
     assert(inputs.size() == 1);
     assert(parameters.size() == 0);
-    assert(outputs.size() == 1);
+    assert(outputs.size() == 1 || outputs.size() == 2);
 
-    forward(reinterpret_cast<const nn::workload_data<float> *>(inputs[0]),
-            reinterpret_cast<nn::workload_data<float> *>(outputs[0]));
+    auto intermediate_output = (outputs.size() == 2) ? outputs[1] : nullptr;
+
+    forward(nn::workload_data_cast<>(inputs[0]),
+            reinterpret_cast<nn::workload_data<> *>(outputs[0]),
+            reinterpret_cast<nn::workload_data<> *>(intermediate_output));
 }
-
-__m256 _internal_mm256_pow2_ps(__m256 arg)
-{
-    __m256i e = _mm256_sub_epi32(_mm256_cvttps_epi32(arg), _mm256_and_si256(_mm256_castps_si256(_mm256_cmp_ps(arg, _mm256_setzero_ps(), _CMP_LT_OQ)), _mm256_set1_epi32(1)));
-
-    arg = _mm256_sub_ps(arg, _mm256_cvtepi32_ps(e));
-
-    arg = 
-        _mm256_fmadd_ps(
-            _mm256_fmadd_ps(
-                _mm256_fmadd_ps(
-                    _mm256_fmadd_ps(
-                        _mm256_fmadd_ps(
-                              _mm256_fmadd_ps(
-                                  arg
-                                , _mm256_set1_ps(0.00021871895714413f)
-                                , _mm256_set1_ps(0.00123905464987147f))
-                            , arg
-                            , _mm256_set1_ps(0.00968412797528994f))
-                        , arg
-                        , _mm256_set1_ps(0.0554807914042966f))
-                    , arg
-                    , _mm256_set1_ps(0.240230343637606f))
-                , arg
-                , _mm256_set1_ps(0.693146963375785f))
-            , arg
-            , _mm256_set1_ps(0.999999999869321f));
-
-    __m256 res = _mm256_castsi256_ps(_mm256_slli_epi32(_mm256_add_epi32(e, _mm256_set1_epi32(127)), 23));
-
-    res = _mm256_mul_ps(res, arg);
-
-    return res;
-}
-
-__m256 _internal_mm256_log2_ps(__m256 input)
-{
-    __m256i tmp = _mm256_castps_si256(input);
-    __m256i e = _mm256_and_si256(tmp, _mm256_set1_epi32(0xff800000));
-
-    input = _mm256_castsi256_ps(_mm256_or_si256(_mm256_xor_si256(tmp, e), _mm256_set1_epi32(0x40000000)));
-    e = _mm256_srai_epi32(_mm256_sub_epi32(e, _mm256_set1_epi32(0x3f900000)), 23);
-
-    input = 
-        _mm256_fmadd_ps(
-            _mm256_fmadd_ps(
-                _mm256_fmadd_ps(
-                    _mm256_fmadd_ps(
-                        _mm256_fmadd_ps(
-                              _mm256_fmadd_ps(
-                                  input
-                                , _mm256_set1_ps(-3.92272173215165e-4f)
-                                , _mm256_set1_ps(8.44188448699613e-3f))
-                            , input
-                            , _mm256_set1_ps(-7.80873452751869e-2f))
-                        , input
-                        , _mm256_set1_ps(4.06812574432218e-1f))
-                    , input
-                    , _mm256_set1_ps(-1.32744857721956f))
-                , input
-                , _mm256_set1_ps(3.04806680788937f))
-            , input
-            , _mm256_set1_ps(-2.03647726245336f));
-
-    return _mm256_add_ps(input, _mm256_cvtepi32_ps(e));
-}
-
-__m256 _internal_generic_mm256_pow_ps(__m256 base, __m256 exponent)
-{
-    return _internal_mm256_pow2_ps(_mm256_mul_ps(_internal_mm256_log2_ps(base), exponent));
-}
-
-__m256 _internal_2_33_mm256_pow_ps(__m256 base)
-{
-    auto x = _mm256_castsi256_ps(_mm256_or_si256(_mm256_and_si256(_mm256_castps_si256(base), _mm256_set1_epi32(0x007fffff)), _mm256_set1_epi32(0x3f800000)));
-    auto e4 = _mm256_sub_epi32(_mm256_srai_epi32(_mm256_and_si256(_mm256_castps_si256(base), _mm256_set1_epi32(0x7f800000)), 21), _mm256_set1_epi32(508));
-    auto e4_3i = _mm256_srai_epi32(_mm256_add_epi32(_mm256_mullo_epi32(e4, _mm256_set1_epi32(0x5555)), _mm256_set1_epi32(0x1000)), 16);
-    auto e4_3f = _mm256_sub_epi32(e4, _mm256_mullo_epi32(e4_3i, _mm256_set1_epi32(3)));
-
-    auto e0 = _mm256_add_ps(_mm256_set1_ps(1.0f), _mm256_castsi256_ps(_mm256_and_si256(_mm256_cmpgt_epi32(e4_3f, _mm256_set1_epi32(0)), _mm256_castps_si256(_mm256_set1_ps(0.2599210498948731647672106072782f)))));
-    auto e1 = _mm256_add_ps(_mm256_set1_ps(1.0f), _mm256_castsi256_ps(_mm256_and_si256(_mm256_cmpgt_epi32(e4_3f, _mm256_set1_epi32(1)), _mm256_castps_si256(_mm256_set1_ps(0.2599210498948731647672106072782f)))));
-
-    auto e = _mm256_mul_ps(_mm256_mul_ps(_mm256_castsi256_ps(_mm256_slli_epi32(_mm256_add_epi32(e4_3i, _mm256_set1_epi32(127)), 23)), e0), e1);
-
-    x =
-        _mm256_fmadd_ps(
-            _mm256_fmadd_ps(
-                _mm256_fmadd_ps(
-                    _mm256_fmadd_ps(
-                        _mm256_fmadd_ps(
-                              _mm256_fmadd_ps(
-                                  x
-                                , _mm256_set1_ps(-6.13621063256050e-4f)
-                                , _mm256_set1_ps(2.81846524230542e-3f))
-                            , x
-                            , _mm256_set1_ps(7.23755774062622e-3f))
-                        , x
-                        , _mm256_set1_ps(-9.05150071637931e-2f))
-                    , x
-                    , _mm256_set1_ps(4.30600295045482e-1f))
-                , x
-                , _mm256_set1_ps(7.04368603164122e-1f))
-            , x
-            , _mm256_set1_ps(-5.38962929654863e-2f));
-
-    return _mm256_mul_ps(_mm256_mul_ps(x, e), base);
-}
-
-enum EXP_APPROX
-{
-    APPROX_GENERIC,
-    APPROX_2_33
-};
-
-template<EXP_APPROX T_approx> __m256 _internal_mm256_pow_ps                (__m256 base, __m256 exponent);
-template<>                    __m256 _internal_mm256_pow_ps<APPROX_GENERIC>(__m256 base, __m256 exponent) {return _internal_generic_mm256_pow_ps(base, exponent);}
-template<>                    __m256 _internal_mm256_pow_ps<APPROX_2_33>   (__m256 base, __m256 exponent) {return _internal_2_33_mm256_pow_ps(base);}
 
 template<EXP_APPROX T_approx>
 void backward_inner_template(
-    const nn::workload_data<float> *forward_input,
-    const nn::workload_data<float> *forward_output,
-    const nn::workload_data<float> *backward_input,
-    nn::workload_data<float> *backward_output,
+    const nn::workload_data<> *forward_input,
+    const nn::workload_data<> *forward_intermediate_output,
+    const nn::workload_data<> *forward_output,
+    const nn::workload_data<> *backward_input,
+    nn::workload_data<> *backward_output,
     const uint32_t n,
     const float alpha,
     const float beta)
 {
     const uint32_t range = (n - 1) / 2;
-    
+
     const auto forward_input_buffer = reinterpret_cast<float*>(forward_input->parent->data_buffer);
+    const auto forward_intermediate_output_buffer = reinterpret_cast<float*>(forward_intermediate_output->parent->data_buffer);
     const auto forward_output_buffer = reinterpret_cast<float*>(forward_output->parent->data_buffer);
     const auto backward_input_buffer = reinterpret_cast<float*>(backward_input->parent->data_buffer);
     const auto backward_output_buffer = reinterpret_cast<float*>(backward_output->parent->data_buffer);
@@ -1042,14 +1018,12 @@ void backward_inner_template(
 
     assert(input_depth == output_depth);
 
-    __m256i mask;
     const __m256 alpha_vec = _mm256_set1_ps(alpha);
     const __m256 beta_vec = _mm256_set1_ps(beta);
     const __m256 const_vec = _mm256_set1_ps(-2.0f);
-    const __m256 pow_vec = _mm256_set1_ps(1.0f + 1.0f / beta);
+    const __m256 pow_vec = _mm256_set1_ps(-beta);
 
     uint32_t* initial_load_mask = reinterpret_cast<uint32_t*>(alloca((output_depth + n - 1) * sizeof(float)));
-    uint32_t load_mask[C_simd_width];
     uint32_t load_mask_id = 0;
 
     for(uint32_t i = 0; i < range; ++i, ++load_mask_id)
@@ -1061,30 +1035,37 @@ void backward_inner_template(
     for(uint32_t i = 0; i < range; ++i, ++load_mask_id)
         initial_load_mask[load_mask_id] = 0;
 
-    for (uint32_t batch = backward_output->view_begin.t[NN_DATA_COORD_n]; batch <= backward_output->view_end.t[NN_DATA_COORD_n]; ++batch)
+    for (uint32_t input_batch = backward_output->view_begin.t[NN_DATA_COORD_n];
+         input_batch <= backward_output->view_end.t[NN_DATA_COORD_n];
+         ++input_batch)
     {
-        for (uint32_t row = backward_output->view_begin.t[NN_DATA_COORD_y];
-             row <= backward_output->view_end.t[NN_DATA_COORD_y];
-             ++row)
+        for (uint32_t input_row = backward_output->view_begin.t[NN_DATA_COORD_y], row = forward_output->view_begin.t[NN_DATA_COORD_y];
+             input_row <= backward_output->view_end.t[NN_DATA_COORD_y];
+             ++row, ++input_row)
         {
-            for (uint32_t column = backward_output->view_begin.t[NN_DATA_COORD_x];
-                 column <= backward_output->view_end.t[NN_DATA_COORD_x];
-                 ++column)
+            for (uint32_t input_column = backward_output->view_begin.t[NN_DATA_COORD_x], column = forward_output->view_begin.t[NN_DATA_COORD_x];
+                 input_column <= backward_output->view_end.t[NN_DATA_COORD_x];
+                 ++column, ++input_column)
             {
                 const auto forward_input_ptr =   forward_input_buffer
-                                               + column * input_depth
-                                               + row * input_depth * input_width
-                                               + batch * input_depth * input_width * input_height;
+                                               + input_column * input_depth
+                                               + input_row * input_depth * input_width
+                                               + input_batch * input_depth * input_width * input_height;
+
+                const auto forward_intermediate_output_ptr =   forward_intermediate_output_buffer
+                                                             + column * output_depth
+                                                             + row * output_depth * output_width
+                                                             + input_batch * output_depth * output_width * output_height;
 
                 const auto forward_output_ptr =   forward_output_buffer
                                                 + column * output_depth
                                                 + row * output_depth * output_width
-                                                + batch * output_depth * output_width * output_height;
+                                                + input_batch * output_depth * output_width * output_height;
 
                 const auto backward_input_ptr =   backward_input_buffer
                                                 + column * output_depth
                                                 + row * output_depth * output_width
-                                                + batch * output_depth * output_width * output_height;
+                                                + input_batch * output_depth * output_width * output_height;
 
 
                 #pragma forceinline recursive
@@ -1100,41 +1081,38 @@ void backward_inner_template(
                     {
                         const __m256i mask = _mm256_loadu_si256((__m256i*)(initial_load_mask + out_feature_map + range));
                         const __m256 n_out = _mm256_maskload_ps(forward_input_ptr + out_feature_map, mask);
-                        const __m256 a_out = _mm256_maskload_ps(forward_output_ptr + out_feature_map, mask);
-                        const __m256 n_in = _mm256_load_ps(forward_input_ptr + in_feature_map);                     
+                        const __m256 int_out = _mm256_maskload_ps(forward_intermediate_output_ptr + out_feature_map, mask);
+                        const __m256 int_out_beta = _internal_mm256_pow_ps<T_approx>(int_out, pow_vec);
+                        const __m256 n_in = _mm256_load_ps(forward_input_ptr + in_feature_map);
                         const __m256 error_in = _mm256_maskload_ps(backward_input_ptr + out_feature_map, mask);
 
                         // This code corresponds to:
-                        // acc = -2.0f * alpha * beta * n_out * n_in * std::pow(a_out / n_out, 1.0f + 1.0f / beta);
+                        // Old version: -2.0f * alpha * beta * n_out * n_in * std::pow(a_out / n_out, 1.0f + 1.0f / beta);
+                        // New version: -2.0f * alpha * beta * n_out * n_in * int_out^-beta / int_out
                         __m256 acc = _mm256_mul_ps(
                                          _mm256_mul_ps(
-                                             _internal_mm256_pow_ps<T_approx>(
-                                                 _mm256_div_ps(a_out, n_out),
-                                                 pow_vec),
-                                             n_in),
+                                             n_in,
+                                             _mm256_div_ps(
+                                                 int_out_beta,
+                                                 int_out)),
                                          _mm256_mul_ps(
                                              _mm256_mul_ps(const_vec, alpha_vec),
                                              _mm256_mul_ps(beta_vec, n_out)));
+
+                        if(in_feature_map == out_feature_map)
+                        {
+                            acc = _mm256_add_ps(acc, int_out_beta);
+                        }
 
                         acc = _mm256_and_ps(acc, _mm256_castsi256_ps(mask));
                         derivative_accumulator = _mm256_fmadd_ps(acc, error_in, derivative_accumulator);
                     }
 
-                    {
-                        const __m256i mask = _mm256_loadu_si256((__m256i*)(initial_load_mask + in_feature_map + range));
-                        const __m256 n_out = _mm256_maskload_ps(forward_input_ptr + in_feature_map, mask);
-                        const __m256 a_out = _mm256_maskload_ps(forward_output_ptr + in_feature_map, mask);
-                        const __m256 error_in = _mm256_maskload_ps(backward_input_ptr + in_feature_map, mask);
-
-                        __m256 acc = _mm256_and_ps(_mm256_div_ps(a_out, n_out), _mm256_castsi256_ps(mask));
-                        derivative_accumulator = _mm256_fmadd_ps(acc, error_in, derivative_accumulator);
-                    }
-
                     _mm256_store_ps(  backward_output_buffer
                                     + in_feature_map
-                                    + column * input_depth
-                                    + row * input_depth * input_width
-                                    + batch * input_depth * input_width * input_height
+                                    + input_column * input_depth
+                                    + input_row * input_depth * input_width
+                                    + input_batch * input_depth * input_width * input_height
                                     , derivative_accumulator);
                 }
             }
@@ -1143,16 +1121,18 @@ void backward_inner_template(
 }
 
 void normalization_response_across_maps_f32::backward(
-    const nn::workload_data<float> *forward_input,
-    const nn::workload_data<float> *forward_output,
-    const nn::workload_data<float> *backward_input,
-    nn::workload_data<float> *backward_output)
+    const nn::workload_data<> *forward_input,
+    const nn::workload_data<> *forward_intermediate_data,
+    const nn::workload_data<> *forward_output,
+    const nn::workload_data<> *backward_input,
+    nn::workload_data<> *backward_output)
 {
     if(beta == 0.75f)
     {
-        // Fast approximated exponent = 2.333f.
-        backward_inner_template<APPROX_2_33>(
+        // Fast approximated exponent = -0.75.
+        backward_inner_template<APPROX_NEGATIVE_0_75>(
                 forward_input,
+                forward_intermediate_data,
                 forward_output,
                 backward_input,
                 backward_output,
@@ -1162,15 +1142,7 @@ void normalization_response_across_maps_f32::backward(
     }
     else
     {
-        // Generic case.
-        backward_inner_template<APPROX_GENERIC>(
-                forward_input,
-                forward_output,
-                backward_input,
-                backward_output,
-                n,
-                alpha,
-                beta);
+        assert(0);
     }
 }
 
@@ -1178,13 +1150,14 @@ void normalization_response_across_maps_f32::backward(const std::vector<nn_workl
                                                       const std::vector<const nn_workload_data_t *> &parameters,
                                                       const std::vector<const nn_workload_data_t *> &outputs) {
     assert(inputs.size() == 1);
-    assert(outputs.size() == 1);
+    assert(outputs.size() == 2);
 
-    const nn::workload_data<float> backward_input(outputs[0]->parent->delta_buffer, outputs[0]->parent->lengths, outputs[0]->parent->layout);
-    nn::workload_data<float> backward_output(inputs[0]->parent->delta_buffer, inputs[0]->parent->lengths, inputs[0]->parent->layout);
+    const nn::workload_data<> backward_input(outputs[0]->parent->delta_buffer, outputs[0]->parent->lengths, outputs[0]->parent->layout);
+    nn::workload_data<> backward_output(inputs[0]->parent->delta_buffer, inputs[0]->parent->lengths, inputs[0]->parent->layout);
 
-    dispatch_backward(reinterpret_cast<const nn::workload_data<float> *>(inputs[0]),
-                      reinterpret_cast<const nn::workload_data<float> *>(outputs[0]),
+    dispatch_backward(nn::workload_data_cast<>(inputs[0]),
+                      nn::workload_data_cast<>(outputs[1]),
+                      nn::workload_data_cast<>(outputs[0]),
                       &backward_input,
                       &backward_output);
 }
@@ -1198,10 +1171,11 @@ void wrapper_normalization_work_item_backward(nn_workload_item *const work_item)
     case NN_NORMALIZATION_MODE_RESPONSE_ACROSS_MAPS: {
         auto primitive = static_cast<normalization_response_across_maps_f32 *>(work_item->forward_item->primitive);
         primitive->dispatch_backward(
-            reinterpret_cast<nn::workload_data<float> *>(work_item->forward_item->input[0].get_data_view()),
-            reinterpret_cast<nn::workload_data<float> *>(work_item->forward_item->output[0]),
-            reinterpret_cast<nn::workload_data<float> *>(work_item->input[0].get_data_view()),
-            reinterpret_cast<nn::workload_data<float> *>(work_item->output[0]));
+            reinterpret_cast<nn::workload_data<> *>(work_item->forward_item->input[0].get_data_view()),
+            reinterpret_cast<nn::workload_data<> *>(work_item->input[1].get_data_view()),
+            reinterpret_cast<nn::workload_data<> *>(work_item->forward_item->output[0]),
+            reinterpret_cast<nn::workload_data<> *>(work_item->input[0].get_data_view()),
+            reinterpret_cast<nn::workload_data<> *>(work_item->output[0]));
         break;
     }
     default: {
@@ -1231,7 +1205,7 @@ bool normalization_elementwise_linear_f32::validate_input(size_t index, nn_workl
 {
     switch (index) {
     case 0:
-        return nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, float>::validate<false>(
+        return nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::validate<false>(
             data, get_required_input_w(), get_required_input_h(), input_size_z, batch_size, 0, 0, 0, 0);
     }
 
@@ -1265,7 +1239,13 @@ normalization_response_across_maps_f32::normalization_response_across_maps_f32(f
       alpha(alpha),
       beta(beta),
       k(k),
-      n(n) {}
+      n(n)
+{
+}
+
+normalization_response_across_maps_f32::~normalization_response_across_maps_f32()
+{
+}
 
 size_t normalization_response_across_maps_f32::get_required_input_w() { return output_size_x; }
 
@@ -1275,11 +1255,38 @@ bool normalization_response_across_maps_f32::validate_input(size_t index, nn_wor
 {
     switch (index) {
     case 0:
-        return nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, float>::validate<true>(
+        return nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::validate<true>(
             data, get_required_input_w(), get_required_input_h(), input_size_z, batch_size, 0, 0, 0, 0);
     }
 
     throw std::invalid_argument("index out of range");
+}
+std::vector<nn_workload_data_t *> normalization_response_across_maps_f32::create_outputs(bool allocate_delta) {
+    if (allocate_delta == true)
+    {
+        return{ nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::create(device,
+            static_cast<uint32_t>(output_size_x),
+            static_cast<uint32_t>(output_size_y),
+            static_cast<uint32_t>(output_size_z),
+            static_cast<uint32_t>(batch_size),
+            static_cast<uint32_t>(output_padding_left),
+            static_cast<uint32_t>(output_padding_right),
+            static_cast<uint32_t>(output_padding_top),
+            static_cast<uint32_t>(output_padding_bottom),
+            allocate_delta),
+            nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::create(device,
+            static_cast<uint32_t>(output_size_x),
+            static_cast<uint32_t>(output_size_y),
+            static_cast<uint32_t>(output_size_z),
+            static_cast<uint32_t>(batch_size),
+            static_cast<uint32_t>(output_padding_left),
+            static_cast<uint32_t>(output_padding_right),
+            static_cast<uint32_t>(output_padding_top),
+            static_cast<uint32_t>(output_padding_bottom),
+            allocate_delta) };
+    }
+    else
+        return helper_zxyn_f32::primitive_zxyn_f32_base::create_outputs(allocate_delta);
 }
 } // namespace layer
 

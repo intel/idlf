@@ -40,6 +40,7 @@ namespace int16_fixedpoint
     {
     public:
         pooling_i16(
+            NN_POOLING_MODE pooling_mode,
             const size_t num_output,
             size_t output_w,
             size_t output_h,
@@ -47,6 +48,8 @@ namespace int16_fixedpoint
             size_t pool_size_y,
             size_t pool_stride_x,
             size_t pool_stride_y,
+            const int32_t center_offset_x,
+            const int32_t center_offset_y,
             size_t batch_size,
             size_t output_padding_left,
             size_t output_padding_right,
@@ -121,6 +124,9 @@ namespace int16_fixedpoint
         const size_t output_padding_right;
         const size_t output_padding_top;
         const size_t output_padding_bottom;
+        const NN_POOLING_MODE pooling_mode;
+        const uint32_t center_offset_x;
+        const uint32_t center_offset_y;
         nn_device_internal * const device;
         static const nn_workload_data_layout_t out_layout;
 

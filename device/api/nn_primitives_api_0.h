@@ -74,6 +74,13 @@ typedef enum {
     NN_OPAQUE_DATA_FLAGS_ALLOC_DELTA = 0x01,
 } NN_OPAQUE_DATA_FLAGS;
 
+/* enumeration of flags for opaque data container */
+typedef enum {
+    USE_DATA = 0,
+    USE_DELTA,
+} NN_DATA_OR_DELTA;
+
+
 /* description of device */
 typedef struct {
     NN_DEVICE_PRIMITIVES_TYPE type;           /* device type */
@@ -256,18 +263,19 @@ typedef nn_event_t(NN_API_CALL_CONVENTION *nn_primitives_copy_data_from_opaque_d
     NN_API_STATUS *status          /* set to NN_API_STATUS_OK on scheduling success */
     );
 
-/* Asynchronously update parameters based on deltas calculated during backward pass
-    Returns event handle to use for setting dependencies or to wait for task completion
+/* Asynchronously copy data from one internal data storage to another.
+   Returns event handle to use for setting dependencies or to wait for task completion
 */
-typedef nn_event_t(NN_API_CALL_CONVENTION *nn_primitives_update_parameters_async_t)(
+typedef nn_event_t(NN_API_CALL_CONVENTION *nn_primitives_opaque_to_opaque_async_t)(
     nn_device_t *device,
-    size_t parameters_count,              /* size of parameter array */
-    nn_opaque_data_t *parameter_array[],  /* internal data storage with parameters to update */
-    float learning_rate,                  /* learning rate */
-    size_t dependency_count,              /* size of dependencies array */
-    nn_event_t dependency_array[],        /* array of nn_event_t objects for tasks that need to be
-                                             completed before the copy is started */
-    NN_API_STATUS *status                 /* set to NN_API_STATUS_OK on scheduling success */
+    NN_DATA_OR_DELTA destination_data_or_delta, /* specifies if data or delta buffer is used as destination */
+    nn_opaque_data_t *destination,              /* internal data storage to copy data into */
+    NN_DATA_OR_DELTA source_data_or_delta,      /* specifies if data or delta buffer is used as source */
+    nn_opaque_data_t *source,                   /* internal data storage to copy from */
+    size_t dependency_count,                    /* size of dependencies array */
+    nn_event_t dependency_array[],              /* array of nn_event_t objects for tasks that need to be
+                                                   completed before the copy is started */
+    NN_API_STATUS *status                       /* set to NN_API_STATUS_OK on scheduling success */
     );
 
 /* Create internal data storage that is a view into an 3d window of original internal data storage
@@ -283,6 +291,24 @@ typedef nn_opaque_data_t *(NN_API_CALL_CONVENTION *nn_primitives_create_view_3d_
     size_t end_z,             /* last included Z coordinate */
     NN_API_STATUS *status     /* set to NN_API_STATUS_OK on success */
     );
+
+/* Performs arithmetic operation Y = alpha * X + beta * Y on data in internal data containers.
+   Returns: nn_event_t handle
+*/
+typedef nn_event_t(NN_API_CALL_CONVENTION *nn_primitives_axpby_async_t)(
+    nn_device_t *device,
+    NN_DATA_OR_DELTA X_data_or_delta,          /* specifies if data or delta buffer is used for X */
+	float alpha,                               /* alpha parameter in Y=alpha*X+beta*Y */
+    nn_opaque_data_t *X,                       /* X data in private data storage */
+    NN_DATA_OR_DELTA Y_data_or_delta,          /* specifies if data or delta buffer is used for Y */
+    float beta,                                /* beta parameter in Y=alpha*X+beta*Y */
+    nn_opaque_data_t *Y,                       /* Y data in private data storage */
+    size_t dependency_count,                   /* size of dependencies array */
+    nn_event_t dependency_array[],             /* array of nn_event_t objects for tasks that need to be
+                                                  completed before the execution is started */
+    NN_API_STATUS *status                      /* set to NN_API_STATUS_OK on scheduling success */
+    );
+    
 
 typedef nn_event_t(NN_API_CALL_CONVENTION *nn_primitives_execute_async_t)(
     nn_primitive_handle_t handle,              /* primitive handle */
@@ -344,6 +370,23 @@ typedef struct {
     } fixed_point_fraction_bits;
 } nn_primitives_convolution_hints_t;
 
+typedef struct {
+    struct {
+        size_t left;
+        size_t right;
+        size_t top;
+        size_t bottom;
+    } output_padding;
+    enum {
+        NN_PRIMITIVES_RELU_HINTS_OUTPUT_LAYOUT_3D,
+        NN_PRIMITIVES_RELU_HINTS_OUTPUT_LAYOUT_1D
+    } output_layout;
+    struct {
+        size_t accumulator;
+        size_t output;
+    } fixed_point_fraction_bits;
+} nn_primitives_relu_hints_t;
+
 /* Creates primitive handle, decides on evaluation strategy, internal data layouts, etc.
     Returns: primitive handle or NULL on failure
 */
@@ -394,8 +437,10 @@ typedef nn_primitive_handle_t(NN_API_CALL_CONVENTION *nn_primitives_pooling_crea
     size_t num_feature_maps,      /* number of input/output feature maps */
     size_t output_w,              /* output width */
     size_t output_h,              /* output height */
+    const int32_t center_offset_x,/* center offset x */
+    const int32_t center_offset_y,/* center offset y */
     size_t batch_size,            /* size of input batch */
-    const nn_primitives_pooling_hints_t *hints,
+    const nn_primitives_pooling_hints_t* hints,
     NN_API_STATUS *status /* NN_API_STATUS_OK on success */
     );
 
@@ -422,7 +467,7 @@ typedef nn_primitive_handle_t(NN_API_CALL_CONVENTION *nn_primitives_convolution_
     size_t pooling_kernel_h,                    /* height of pooling kernel */
     size_t pooling_stride_x,                    /* horizontal pooling stride */
     size_t pooling_stride_y,                    /* vertical pooling stride */
-    const nn_primitives_convolution_pooling_hints_t *hints,
+    const nn_primitives_convolution_pooling_hints_t* hints,
     NN_API_STATUS *status /* NN_API_STATUS_OK on success */
     );
 
@@ -442,7 +487,7 @@ typedef nn_primitive_handle_t(NN_API_CALL_CONVENTION *nn_primitives_fully_connec
     size_t num_output,                          /* number of output feature maps */
     const nn_argument_activation_t *activation, /* struct parameterizing optional activation function */
     size_t batch_size,                          /* size of input batch */
-    const nn_primitives_fully_connected_hints_t *hints,
+    const nn_primitives_fully_connected_hints_t* hints,
     NN_API_STATUS *status                       /* NN_API_STATUS_OK on success */
     );
 
@@ -553,8 +598,6 @@ typedef nn_primitive_handle_t(NN_API_CALL_CONVENTION *nn_primitives_convert_floa
     NN_API_STATUS *status /* NN_API_STATUS_OK on success */
     );
 
-typedef nn_primitives_convolution_hints_t nn_primitives_relu_hints_t;
-
 /* Creates primitive handle, decides on evaluation strategy, internal data layouts, etc.
 Returns: primitive handle or NULL on failure
 */
@@ -573,7 +616,7 @@ Returns: primitive handle or NULL on failure
 */
 typedef nn_primitive_handle_t(NN_API_CALL_CONVENTION *nn_primitives_loss_function_create_t)(
     nn_device_t *device,  /* IDLF device handle */
-    NN_LOSS_FUNCTION function, 
+    NN_LOSS_FUNCTION function,
     size_t image_size_x,  /* image width */
     size_t image_size_y,  /* image height */
     size_t image_size_z,  /* number of feature maps */
@@ -593,6 +636,13 @@ typedef nn_primitive_handle_t(NN_API_CALL_CONVENTION *nn_primitives_dropout_crea
     float drop_rate,      /* drop rate */
     NN_API_STATUS *status /* NN_API_STATUS_OK on success */
     );
+
+typedef nn_primitive_handle_t(NN_API_CALL_CONVENTION *nn_primitives_convolution_conversion_create_t)(
+    nn_device_t *device,
+    size_t input_size_x,
+    size_t input_size_y,
+    size_t input_size_z,
+    size_t batch_size);
 
 typedef struct {
     /* Creates nn_device_t handle which can be then used to instantiate primitives */
@@ -640,8 +690,8 @@ typedef struct {
     /* Copy deltas from internal storage */
     nn_primitives_copy_data_from_opaque_data_async_t copy_delta_from_opaque_async;
 
-    /* Update parametrs */
-    nn_primitives_update_parameters_async_t update_parameters_async;
+    /* Copy opaque to opaque */
+    nn_primitives_opaque_to_opaque_async_t copy_opaque_to_opaque_async;
 
     /* storage manipulation methods **********************************************************************************/
 
@@ -657,14 +707,14 @@ typedef struct {
     /* splits internal container along Z (features) axis and creates N views into its parts */
     nn_primitives_split_opaque_data_t split_z;
 
-    /* creates new storage that merges supplied storage along Z (features) axis and creates a super-view over them */
-    nn_primitives_merge_opaque_data_t merge_z;
+    /* arithmetic methods *********************************************************************************************/
+    nn_primitives_axpby_async_t axpby_async;
 
     /* execution methods *********************************************************************************************/
 
     /* forward pass */
     nn_primitives_execute_async_t forward_async;
-    
+
     /* backward pass */
     nn_primitives_execute_backward_async_t backward_async;
     nn_primitives_execute_backward_parameter_async_t backward_parameter_async;
@@ -744,6 +794,9 @@ typedef struct {
         nn_data_t output format: NX
         */
         nn_primitives_convert_z2nz_n8xn_create_t convert_z2nz_n8xn_i32;
+
+        nn_primitives_convolution_conversion_create_t convert_from_zxyn_to_batch_block_format_nzxyn;
+        nn_primitives_convolution_conversion_create_t convert_from_batch_block_format_to_zxyn;
 
         /* arithmetic operation
 

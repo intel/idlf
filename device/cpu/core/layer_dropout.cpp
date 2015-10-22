@@ -28,11 +28,22 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "layer_dropout.h"
 #include <random>
 #include <array>
+#include <climits>
 #include "device/cpu/api_internal/data_helper.h"
 
 namespace layer
 {
-    template <bool backward> void run_dropout(
+    float get_multiplier(
+        std::mt19937& gen,
+        uint32_t threshold,
+        float scale)
+    {
+        uint32_t intermediate = (~static_cast<uint32_t>((static_cast<int64_t>(gen()) - threshold) >> 32)) & *reinterpret_cast<uint32_t*>(&scale);
+        return *reinterpret_cast<float*>(&intermediate);
+    }
+
+
+    template <bool T_backward, uint32_t T_batch_size> void run_dropout(
         float drop_rate,
         const nn_workload_data_t *input_data,
         const nn_workload_data_t *input_seed,
@@ -44,11 +55,11 @@ namespace layer
 
         if(!is_training)
         {
-            if(backward)
+            if(T_backward)
                 nn_workload_delta_copy(output, input_data);
             else
                 nn_workload_data_copy(output, input_data);
-         
+
             return;
         }
 
@@ -56,22 +67,25 @@ namespace layer
         auto seed = static_cast<uint32_t>(nn_workload_data_get<int32_t>(input_seed, 0, 0, 0, 0, 0, 0));
 
         std::mt19937 gen(seed);
-        std::bernoulli_distribution dis(drop_rate);
+
+        auto threshold = static_cast<uint32_t>(static_cast<double>(drop_rate)*std::numeric_limits<unsigned int>::max());
+
         float scale = 1.0f / (1.0f - drop_rate);
 
-        for (uint32_t n = 0; n < output->parent->lengths.t[NN_DATA_COORD_n]; ++n)
-            for (uint32_t x = 0; x < output->parent->lengths.t[NN_DATA_COORD_x]; ++x)
-                for (uint32_t y = 0; y < output->parent->lengths.t[NN_DATA_COORD_y]; ++y)
-                    for (uint32_t z = 0; z < output->parent->lengths.t[NN_DATA_COORD_z]; ++z)
-                        for (uint32_t p = 0; p < output->parent->lengths.t[NN_DATA_COORD_p]; ++p)
-                            for (uint32_t q = 0; q < output->parent->lengths.t[NN_DATA_COORD_q]; ++q)
-                            {
-                                if(backward)
-                                    nn_workload_data_get_delta<float>(output, n, x, y, z, p, q) = dis(gen) ? 0.0f : nn_workload_data_get_delta<float>(input_data, n, x, y, z, p, q) * scale;
-                                else
-                                    nn_workload_data_get<float>(output, n, x, y, z, p, q) = dis(gen) ? 0.0f : nn_workload_data_get<float>(input_data, n, x, y, z, p, q) * scale;
-                            }
-                                
+        auto in_buffer = reinterpret_cast<float*>((T_backward) ? input_data->parent->delta_buffer : input_data->parent->data_buffer);
+        auto out_buffer = reinterpret_cast<float*>((T_backward) ? output->parent->delta_buffer : output->parent->data_buffer);
+
+        for (uint32_t x = 0; x < output->parent->lengths.t[NN_DATA_COORD_x]; ++x)
+        {
+            float multipliers[T_batch_size];
+
+            for(uint32_t batch = 0; batch < T_batch_size; ++batch)
+                multipliers[batch] = get_multiplier(gen, threshold, scale);
+
+            #pragma unroll (T_batch_size)
+            for(uint32_t batch = 0; batch < T_batch_size; ++batch)
+                *(out_buffer + x*T_batch_size + batch) = *(in_buffer + x*T_batch_size + batch) * multipliers[batch];
+        }
     }
 
     dropout_f32::dropout_f32(
@@ -86,7 +100,7 @@ namespace layer
     bool dropout_f32::validate_input(size_t index, nn_workload_data_t *data) {
         switch (index) {
         case 0:
-            return nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, float>::create(
+            return nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, nn::layout_nx_f32>::create(
                 device, input_size_x * input_size_y * input_size_z, batch_size);
         case 1:
         case 2:
@@ -95,7 +109,7 @@ namespace layer
                data->parent->layout.data_type == nn::type_to_datatype<int32_t>::value &&
                data->parent->data_buffer != nullptr)
                 return true;
-            else 
+            else
                 return false;
         }
         }
@@ -105,13 +119,16 @@ namespace layer
 
     void dropout_f32::forward(const std::vector<const nn_workload_data_t *> &inputs,
                               const std::vector<const nn_workload_data_t *> &parameters,
-                              const std::vector<nn_workload_data_t *> &outputs) {
-        run_dropout<false>(
-            drop_rate,
-            inputs[0],     // input
-            inputs[1],     // seed
-            inputs[2],     // if_training
-            outputs[0]);   // output
+                              const std::vector<nn_workload_data_t *> &outputs)
+    {
+        switch(batch_size)
+        {
+        case  1: run_dropout<false,  1>(drop_rate, inputs[0], inputs[1], inputs[2], outputs[0]); break;
+        case  8: run_dropout<false,  8>(drop_rate, inputs[0], inputs[1], inputs[2], outputs[0]); break;
+        case 48: run_dropout<false, 48>(drop_rate, inputs[0], inputs[1], inputs[2], outputs[0]); break;
+        default:
+            throw std::runtime_error("dropout_forward: invalid batch");
+        }
     }
 
     void dropout_f32::backward(
@@ -119,28 +136,31 @@ namespace layer
         const std::vector<const nn_workload_data_t *> &parameters,
         const std::vector<const nn_workload_data_t *> &outputs)
     {
-        run_dropout<true>(
-            drop_rate,
-            outputs[0],    // input for backpropagation
-            inputs[1],     // seed
-            inputs[2],     // if_training
-            inputs[0]);    // output for backpropagation
+        switch(batch_size)
+        {
+        case  1: run_dropout<true,  1>(drop_rate, outputs[0], inputs[1], inputs[2], inputs[0]); break;
+        case  8: run_dropout<true,  8>(drop_rate, outputs[0], inputs[1], inputs[2], inputs[0]); break;
+        case 48: run_dropout<true, 48>(drop_rate, outputs[0], inputs[1], inputs[2], inputs[0]); break;
+        default:
+            throw std::runtime_error("dropout_forward: invalid batch");
+        }
     }
 
     std::vector<nn_workload_data_t *> dropout_f32::create_inputs(bool allocate_delta) {
-        
-        const nn_workload_data_layout_t layout = nn::workload_data<int32_t>::layout.nxyzpq;
+
+        const nn_workload_data_layout_t layout = nn::layout_t<nn::layout_nxyzpq_i32>::layout;
 
         return {
-            nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, float>::create(
+            nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, nn::layout_nx_f32>::create(
                 device, input_size_x * input_size_y * input_size_z, batch_size, allocate_delta),
-            new nn::workload_data<int32_t>({1, 1, 1, 1, 1, 1}, layout),
-            new nn::workload_data<int32_t>({1, 1, 1, 1, 1, 1}, layout)};
+            nn::data_helper<NN_WORKLOAD_DATA_TAG_O, int32_t>::create( device, 1, 1 ),
+            nn::data_helper<NN_WORKLOAD_DATA_TAG_O, int32_t>::create( device, 1, 1 )
+            };
     }
 
     std::vector<nn_workload_data_t *> dropout_f32::create_outputs(bool allocate_delta) {
         return {
-            nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, float>::create(
+            nn::data_helper<NN_WORKLOAD_DATA_TAG_NX, nn::layout_nx_f32>::create(
                 device, input_size_x * input_size_y * input_size_z, batch_size, allocate_delta)};
     }
 

@@ -27,6 +27,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "device/cpu/core/layer_convolution_avx2.h"
 #include "tester/g_ult/unit_tests/cpu/naive_implementations.h"
+#include <cfloat>
+#include <iostream>
+#include <gtest/gtest.h>
 
 const uint32_t C_simd_width = sizeof(__m256)/sizeof(float);
 const uint32_t C_slice_size = 2 * C_simd_width;
@@ -34,7 +37,7 @@ const uint32_t C_slice_size = 2 * C_simd_width;
 namespace
 {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-// Helper classess and functions.
+// Helper classes and functions.
 void ult_nn_convolution_initialize_work_item(
     nn_workload_item* &work_item,
     nn_workload_item* &input_item,
@@ -56,9 +59,9 @@ void ult_nn_convolution_initialize_work_item(
     NN_ACTIVATION_FUNCTION activation,
     nn_device *device)
 {
-    nn_workload_data_layout_t inp_out_layout = nn::workload_data<float>::layout.zxynpq;
+    nn_workload_data_layout_t inp_out_layout = nn::layout_t<nn::layout_zxynpq_f32>::layout;
 
-    nn_workload_data_layout_t weight_layout = nn::workload_data<float>::layout.pzxyqn;
+    nn_workload_data_layout_t weight_layout = nn::layout_t<nn::layout_pzxyqn_f32>::layout;
 
     nn_workload_data_coords_t input_coords = 
     { 
@@ -100,9 +103,9 @@ void ult_nn_convolution_initialize_work_item(
         (num_output_feature_maps + C_slice_size - 1) / C_slice_size
     };
 
-    nn::workload_data<float> *output_data = new nn::workload_data<float>(output_coords, inp_out_layout);
-    nn::workload_data<float> *bias_data = new nn::workload_data<float>(bias_coords, inp_out_layout);
-    nn::workload_data<float> *weight_data = new nn::workload_data<float>(weight_coords, weight_layout);
+    nn::workload_data<> *output_data = new nn::workload_data<>(output_coords, inp_out_layout);
+    nn::workload_data<> *bias_data = new nn::workload_data<>(bias_coords, inp_out_layout);
+    nn::workload_data<> *weight_data = new nn::workload_data<>(weight_coords, weight_layout);
 
     work_item = new nn_workload_item();
 
@@ -138,8 +141,9 @@ void ult_nn_convolution_initialize_work_item(
 
     input_item = new nn_workload_item();
     input_item->type = NN_WORK_ITEM_TYPE_INPUT;
+    input_item->primitive = nullptr;
 
-    nn::workload_data<float> *input_data = new nn::workload_data<float>(input_coords, inp_out_layout);
+    nn::workload_data<> *input_data = new nn::workload_data<>(input_coords, inp_out_layout);
 
     nn_workload_data_coords_t input_view_begin =
     {
@@ -159,7 +163,7 @@ void ult_nn_convolution_initialize_work_item(
         input_data->get_length(NN_DATA_COORD_q) - 1
     };
 
-    nn::workload_data<float> *view_input_data = new nn::workload_data<float>(*input_data, input_view_begin, input_view_end);
+    nn::workload_data<> *view_input_data = new nn::workload_data<>(*input_data, input_view_begin, input_view_end);
     delete input_data;
 
     memcpy(view_input_data->parent->data_buffer, input, view_input_data->parent->buffer_size);
@@ -171,17 +175,22 @@ void ult_nn_convolution_initialize_work_item(
 //////////////////////////////////////////////////////////////////////////////////////////////////
 void ult_nn_convolution_deinitialize_work_item(nn_workload_item* &work_item)
 {
-    if (work_item->type == NN_WORK_ITEM_TYPE_CONVOLUTION)
+    for(auto& parameter : work_item->parameters)
     {
-        delete reinterpret_cast<nn::workload_data<float>*>(work_item->parameters[1]);
-        delete reinterpret_cast<nn::workload_data<float>*>(work_item->parameters[0]);
+        delete parameter;
+        parameter = nullptr;
     }
 
-    work_item->input.clear();
-    delete reinterpret_cast<nn::workload_data<float>*>(work_item->output[0]);
+    for(auto& output : work_item->output)
+    {
+        delete output;
+        output = nullptr;
+    }
+
+    delete work_item->primitive;
+    work_item->primitive = nullptr;
 
     delete work_item;
-
     work_item = nullptr;
 }
 
@@ -680,7 +689,7 @@ bool ult_perform_padding_test(
     uint32_t ofm_width = (input_feature_map_width + kernel_stride_x - 1) / kernel_stride_x;
     uint32_t ofm_height = (input_feature_map_height + kernel_stride_y - 1) / kernel_stride_y;
 
-    nn_workload_data_layout_t img_layout = nn::workload_data<float>::layout.zxynpq;
+    nn_workload_data_layout_t img_layout = nn::layout_t<nn::layout_zxynpq_f32>::layout;
 
     nn_workload_data_coords_t out_size =
     {
@@ -712,7 +721,7 @@ bool ult_perform_padding_test(
         (num_output_feature_maps + C_slice_size - 1) / C_slice_size
     };
 
-    nn_workload_data_layout_t kernel_layout = nn::workload_data<float>::layout.pzxyqn;
+    nn_workload_data_layout_t kernel_layout = nn::layout_t<nn::layout_pzxyqn_f32>::layout;
 
     // Create input items.
     nn_workload_item* reference_input = new nn_workload_item();
@@ -728,7 +737,7 @@ bool ult_perform_padding_test(
             1,
             1
         };
-        nn::workload_data<float>* out_buffer = new nn::workload_data<float>(reference_input_size, img_layout);
+        nn::workload_data<>* out_buffer = new nn::workload_data<>(reference_input_size, img_layout);
 
         nn_workload_data_coords_t reference_input_subview_begin =
         {
@@ -752,7 +761,7 @@ bool ult_perform_padding_test(
 
         memset(out_buffer->parent->data_buffer, 0, out_buffer->parent->buffer_size);
 
-        reference_input->output.push_back(new nn::workload_data<float>(*out_buffer, reference_input_subview_begin, reference_input_subview_end));
+        reference_input->output.push_back(new nn::workload_data<>(*out_buffer, reference_input_subview_begin, reference_input_subview_end));
         delete out_buffer;
     }
 
@@ -769,7 +778,7 @@ bool ult_perform_padding_test(
             1,
             1
         };
-        tested_input->output.push_back(new nn::workload_data<float>(reference_input_size, img_layout));
+        tested_input->output.push_back(new nn::workload_data<>(reference_input_size, img_layout));
     }
 
     // Initialize input buffers.
@@ -825,13 +834,12 @@ bool ult_perform_padding_test(
                                                                reinterpret_cast<nn_device_internal *>(device));
 
         reference_conv->parameters.resize(2);
-        reference_conv->parameters[1] = new nn::workload_data<float>(bias_size, img_layout);
-        reference_conv->parameters[0] = new nn::workload_data<float>(kernel_size, kernel_layout);
+        reference_conv->parameters[1] = new nn::workload_data<>(bias_size, img_layout);
+        reference_conv->parameters[0] = new nn::workload_data<>(kernel_size, kernel_layout);
 
-        reference_conv->output.push_back(new nn::workload_data<float>(out_size, img_layout));
+        reference_conv->output.push_back(new nn::workload_data<>(out_size, img_layout));
 
         reference_conv->input.push_back({ reference_input, 0 });
-        reference_input->use.push_back({ reference_conv, 0 });
     }
 
     nn_workload_item* tested_conv = new nn_workload_item();
@@ -859,13 +867,12 @@ bool ult_perform_padding_test(
                                                             reinterpret_cast<nn_device_internal *>(device));
 
         tested_conv->parameters.resize(2);
-        tested_conv->parameters[1] = new nn::workload_data<float>(bias_size, img_layout);
-        tested_conv->parameters[0] = new nn::workload_data<float>(kernel_size, kernel_layout);
+        tested_conv->parameters[1] = new nn::workload_data<>(bias_size, img_layout);
+        tested_conv->parameters[0] = new nn::workload_data<>(kernel_size, kernel_layout);
 
-        tested_conv->output.push_back(new nn::workload_data<float>(out_size, img_layout));
+        tested_conv->output.push_back(new nn::workload_data<>(out_size, img_layout));
 
         tested_conv->input.push_back({ tested_input, 0 });
-        tested_input->use.push_back({ tested_conv, 0 });
     }
 
     // Initialize kernel buffers.
@@ -959,20 +966,22 @@ bool ult_perform_padding_test(
         }
     }
 
-    delete reinterpret_cast<nn::workload_data<float>*>(tested_conv->parameters[1]);
-    delete reinterpret_cast<nn::workload_data<float>*>(tested_conv->parameters[0]);
-    delete reinterpret_cast<nn::workload_data<float>*>(tested_conv->output[0]);
+    delete nn::workload_data_cast<>(tested_conv->parameters[1]);
+    delete nn::workload_data_cast<>(tested_conv->parameters[0]);
+    delete nn::workload_data_cast<>(tested_conv->output[0]);
+    delete tested_conv->primitive;
     delete tested_conv;
 
-    delete reinterpret_cast<nn::workload_data<float>*>(reference_conv->parameters[1]);
-    delete reinterpret_cast<nn::workload_data<float>*>(reference_conv->parameters[0]);
-    delete reinterpret_cast<nn::workload_data<float>*>(reference_conv->output[0]);
+    delete nn::workload_data_cast<>(reference_conv->parameters[1]);
+    delete nn::workload_data_cast<>(reference_conv->parameters[0]);
+    delete nn::workload_data_cast<>(reference_conv->output[0]);
+    delete reference_conv->primitive;
     delete reference_conv;
 
-    delete reinterpret_cast<nn::workload_data<float>*>(tested_input->output[0]);
+    delete nn::workload_data_cast<>(tested_input->output[0]);
     delete tested_input;
 
-    delete reinterpret_cast<nn::workload_data<float>*>(reference_input->output[0]);
+    delete nn::workload_data_cast<>(reference_input->output[0]);
     delete reference_input;
 
     return passed;

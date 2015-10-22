@@ -75,13 +75,14 @@ bool test_caffe_float_workload_cpu_time::init()
         if(workflow == nullptr)  throw std::runtime_error("Workflow has not been initialized");
 
         init_ok = true;
-    }
-    catch(std::runtime_error &error) {
+    } catch(std::runtime_error &error) {
         init_result << "error: " + std::string(error.what());
         init_ok = false;
-    }
-    catch(...) {
-        init_result << "unknown error";
+    } catch( std::exception &error ) {
+        init_result << "error: " + std::string( error.what() );
+        init_ok = false;
+    } catch(...) {
+        init_result << "error: unknown";
         init_ok = false;
     }
 
@@ -227,7 +228,7 @@ bool test_caffe_float_workload_cpu_time::done()
         done_ok = false;
     }
     catch(...) {
-        done_result << "unknown error";
+        done_result << "error: unknown";
         done_ok = false;
     }
 

@@ -34,9 +34,9 @@ namespace layer
     {
         auto primitive = static_cast<layer::loss_function_f32 *>(item->forward_item != nullptr ? item->forward_item->primitive : item->primitive);
 
-        auto output = reinterpret_cast<nn::workload_data<float>*>(item->output[0]);
-        auto current_input = reinterpret_cast<nn::workload_data<float>*>(item->input[0].get_data_view());
-        auto target_input = reinterpret_cast<nn::workload_data<float>*>(item->input[1].get_data_view());
+        auto output = nn::workload_data_cast<nn::layout_f32>(item->output[0]);
+        auto current_input = nn::workload_data_cast<nn::layout_f32>(item->input[0].get_data_view());
+        auto target_input = nn::workload_data_cast<nn::layout_f32>(item->input[1].get_data_view());
 
         // TODO: This is temporary until workflow compilation makes use of buffer_delta
         assert(current_input->parent->delta_buffer == nullptr);
@@ -51,10 +51,11 @@ namespace layer
         current_input->parent->delta_buffer = nullptr;
     }
 
+    // Standalone multinomial loss backprop.
     void multinomial_loss(const nn_workload_data_t *label_data,
                           const nn_workload_data_t *input,
                           nn_workload_data_t *output,
-                          uint32_t batch_size) 
+                          uint32_t batch_size)
     {
         const auto C_loss_weight = 1.0f; // Loss weight from caffe.
         const auto C_scale = - C_loss_weight / batch_size;
@@ -66,10 +67,10 @@ namespace layer
         memset(output->parent->data_buffer, 0, output->parent->buffer_size);
 
         for (uint32_t n = output->view_begin.t[NN_DATA_COORD_n];
-                n <= output->view_end.t[NN_DATA_COORD_n]; 
+                n <= output->view_end.t[NN_DATA_COORD_n];
                 ++n)
         {
-            // This label is provided purely by user - we need runtime security 
+            // This label is provided purely by user - we need runtime security
             // check to ensure it's not used to access data not in buffer.
             // This layer is so computationally cheap that we can afford it.
             auto label = *(label_buffer + n);
@@ -104,12 +105,12 @@ namespace layer
                     batch_size,
                     1.0f, 1.0f, -1 / float(batch_size),
                     device)){}
-    
+
     bool loss_function_f32::validate_input(size_t index, nn_workload_data_t *data) {
         switch (index) {
         case 0:
         case 1:
-            return nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, float>::validate<false>(
+            return nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::validate<false>(
                 data, input_size_x, input_size_y, input_size_z, batch_size, 0, 0, 0, 0);
         }
 
@@ -127,7 +128,7 @@ namespace layer
         const std::vector<const nn_workload_data_t *> &parameters,
         const std::vector<const nn_workload_data_t *> &outputs)
     {
-        nn::workload_data<float> output(inputs[0]->parent->delta_buffer, inputs[0]->parent->lengths, inputs[0]->parent->layout);
+        nn::workload_data<> output(inputs[0]->parent->delta_buffer, inputs[0]->parent->lengths, inputs[0]->parent->layout);
         if(function == NN_LOSS_FUNCTION_SUM_OF_SQUARES)
             arithmetic_primitive->forward({inputs[1]}, {inputs[0]}, {&output});
         else if(function == NN_LOSS_FUNCTION_MULTINOMIAL_LOGISTIC)
@@ -138,15 +139,15 @@ namespace layer
 
     std::vector<nn_workload_data_t *> loss_function_f32::create_inputs(bool allocate_delta) {
         return {
-            nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, float>::create(
+            nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::create(
                 device, input_size_x, input_size_y, input_size_z, batch_size, 0, 0, 0, 0, allocate_delta),
-            nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, float>::create(
+            nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::create(
                 device, input_size_x, input_size_y, input_size_z, batch_size, 0, 0, 0, 0, false)};
     }
 
     std::vector<nn_workload_data_t *> loss_function_f32::create_outputs(bool allocate_delta) {
         return {
-            nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, float>::create(
+            nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::create(
                 device, input_size_x, input_size_y, input_size_z, batch_size, 0, 0, 0, 0, allocate_delta)};
     }
 } // namespace layer

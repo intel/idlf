@@ -127,7 +127,8 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
             ready_events.push_back(primitives.copy_to_opaque_async(device, parameters[0], weights, 0, nullptr, nullptr));
             ready_events.push_back(primitives.copy_to_opaque_async(device, parameters[1], bias, 0, nullptr, nullptr));
         }
-        else{
+        else
+        {
             auto w16 = new nn::data<int16_t, 0>(static_cast<nn_data_t *>(weights)->size, weights->dimension);
             auto b16 = new nn::data<int32_t, 1>(static_cast<nn_data_t *>(bias)->size, bias->dimension);
             temporary_data.push_back(w16);
@@ -226,8 +227,8 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
                                 primitives,
                                 "C1",
                                 layers.c1,
-                                "weights_caffenet/conv1.nnd",
-                                "weights_caffenet/conv1_bias.nnd",
+                                "weights_caffenet/conv1_weights.nnd",
+                                "weights_caffenet/conv1_biases.nnd",
                                 parameters_ready_events,
                                 temporary_data,
                                 true,
@@ -245,6 +246,8 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
             96, // num of feature maps
             27, // output width
             27, // output height
+            0, // center offset x
+            0, // center offset y
             batch_size,
             nullptr,
             nullptr);
@@ -297,18 +300,20 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
             batch_size,
             &convolution_hints,
             nullptr);
-
+        //C2 layers inputs/outputs
         {
-            nn_opaque_data_t *c2_inputs[2];
+            nn_opaque_data_t *c2_inputs[2] = {};
             primitives.split_z(2, c2_inputs, layers.outputs["N1"]);
             layers.inputs["C2_1"] = c2_inputs[0];
             layers.inputs["C2_2"] = c2_inputs[1];
 
-            nn_opaque_data_t *c2_outputs[2];
-            primitives.create_outputs(layers.c2g, 1, &c2_outputs[0], 0, nullptr);
-            primitives.create_outputs(layers.c2g, 1, &c2_outputs[1], 0, nullptr);
+            auto temp_handle = primitives.create_handle.convolution_i16(
+                device, 5, 5, 96, 256, 27, 27, 2, 2, 1, 1, &activation, batch_size, &convolution_hints, nullptr);
+            primitives.create_outputs(temp_handle, 1, &layers.inputs["P2"], 0, nullptr);
+            primitives.delete_primitive(temp_handle);
 
-            primitives.merge_z(&layers.outputs["C2"], 2, c2_outputs);
+            nn_opaque_data_t *c2_outputs[2] = {};
+            primitives.split_z(2, c2_outputs, layers.inputs["P2"]);
             layers.outputs["C2_1"] = c2_outputs[0];
             layers.outputs["C2_2"] = c2_outputs[1];
         }
@@ -317,8 +322,8 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
             primitives,
             "C2_1",
             layers.c2g,
-            "weights_caffenet/conv2_g1.nnd",
-            "weights_caffenet/conv2_bias_g1.nnd",
+            "weights_caffenet/conv2_g1_weights.nnd",
+            "weights_caffenet/conv2_g1_biases.nnd",
             parameters_ready_events,
             temporary_data,
             true,
@@ -329,8 +334,8 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
             primitives,
             "C2_2",
             layers.c2g,
-            "weights_caffenet/conv2_g2.nnd",
-            "weights_caffenet/conv2_bias_g2.nnd",
+            "weights_caffenet/conv2_g2_weights.nnd",
+            "weights_caffenet/conv2_g2_biases.nnd",
             parameters_ready_events,
             temporary_data,
             true,
@@ -348,6 +353,8 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
             256, // num of feature maps
             13, // output width
             13, // output height
+            0, // center offset x
+            0, // center offset y
             batch_size,
             nullptr,
             nullptr);
@@ -407,8 +414,8 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
                                 primitives,
                                 "C3",
                                 layers.c3,
-                                "weights_caffenet/conv3.nnd",
-                                "weights_caffenet/conv3_bias.nnd",
+                                "weights_caffenet/conv3_weights.nnd",
+                                "weights_caffenet/conv3_biases.nnd",
                                 parameters_ready_events,
                                 temporary_data,
                                 true,
@@ -451,8 +458,8 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
                                 primitives,
                                 "C4_1",
                                 layers.c4g,
-                                "weights_caffenet/conv4_g1.nnd",
-                                "weights_caffenet/conv4_bias_g1.nnd",
+                                "weights_caffenet/conv4_g1_weights.nnd",
+                                "weights_caffenet/conv4_g1_biases.nnd",
                                 parameters_ready_events,
                                 temporary_data,
                                 true,
@@ -464,8 +471,8 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
                                 primitives,
                                 "C4_2",
                                 layers.c4g,
-                                "weights_caffenet/conv4_g2.nnd",
-                                "weights_caffenet/conv4_bias_g2.nnd",
+                                "weights_caffenet/conv4_g2_weights.nnd",
+                                "weights_caffenet/conv4_g2_biases.nnd",
                                 parameters_ready_events,
                                 temporary_data,
                                 true,
@@ -496,11 +503,15 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
             &convolution_hints,
             nullptr);
 
+        //C5 layer outputs
         {
-            nn_opaque_data_t *c5_views[2];
-            primitives.create_outputs(layers.c5g, 1, &c5_views[0], 0, nullptr);
-            primitives.create_outputs(layers.c5g, 1, &c5_views[1], 0, nullptr);
-            primitives.merge_z(&layers.outputs["C5"], 2, c5_views);
+            auto temp_handle = primitives.create_handle.convolution_i16(
+                device, 3, 3, 384, 256, 13, 13, 1, 1, 1, 1, &activation, batch_size, nullptr, nullptr);
+            primitives.create_outputs(temp_handle, 1, &layers.inputs["P5"], 0, nullptr);
+            //primitives.delete_primitive(temp_handle);
+
+            nn_opaque_data_t *c5_views[2] = {};
+            primitives.split_z(2, c5_views, layers.inputs["P5"]);
             layers.outputs["C5_1"] = c5_views[0];
             layers.outputs["C5_2"] = c5_views[1];
         }
@@ -509,8 +520,8 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
                                 primitives,
                                 "C5_1",
                                 layers.c5g,
-                                "weights_caffenet/conv5_g1.nnd",
-                                "weights_caffenet/conv5_bias_g1.nnd",
+                                "weights_caffenet/conv5_g1_weights.nnd",
+                                "weights_caffenet/conv5_g1_biases.nnd",
                                 parameters_ready_events,
                                 temporary_data,
                                 true,
@@ -521,8 +532,8 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
                                 primitives,
                                 "C5_2",
                                 layers.c5g,
-                                "weights_caffenet/conv5_g2.nnd",
-                                "weights_caffenet/conv5_bias_g2.nnd",
+                                "weights_caffenet/conv5_g2_weights.nnd",
+                                "weights_caffenet/conv5_g2_biases.nnd",
                                 parameters_ready_events,
                                 temporary_data,
                                 true,
@@ -540,6 +551,8 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
             256, // num of feature maps
             6, // output width
             6, // output height
+            0, // center offset x
+            0, // center offset y
             batch_size,
             nullptr,
             nullptr);
@@ -575,8 +588,8 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
                                 primitives,
                                 "FC6",
                                 layers.fc6,
-                                "weights_caffenet/fc6.nnd",
-                                "weights_caffenet/fc6_bias.nnd",
+                                "weights_caffenet/fc6_weights.nnd",
+                                "weights_caffenet/fc6_biases.nnd",
                                 parameters_ready_events,
                                 temporary_data,
                                 true,
@@ -605,8 +618,8 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
                                 primitives,
                                 "FC7",
                                 layers.fc7,
-                                "weights_caffenet/fc7.nnd",
-                                "weights_caffenet/fc7_bias.nnd",
+                                "weights_caffenet/fc7_weights.nnd",
+                                "weights_caffenet/fc7_biases.nnd",
                                 parameters_ready_events,
                                 temporary_data,
                                 true,
@@ -634,8 +647,8 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
                                 primitives,
                                 "FC8",
                                 layers.fc8,
-                                "weights_caffenet/fc8.nnd",
-                                "weights_caffenet/fc8_bias.nnd",
+                                "weights_caffenet/fc8_weights.nnd",
+                                "weights_caffenet/fc8_biases.nnd",
                                 parameters_ready_events,
                                 temporary_data,
                                 true,
@@ -725,7 +738,7 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
         nn_event_t c2[2];
         c2[0] = layers.events["C2_1"];
         c2[1] = layers.events["C2_2"];
-        layers.events["P2"] = primitives.forward_async(layers.p2, 1, &layers.outputs["C2"], 0, nullptr, 1, &layers.outputs["P2"], 2, c2, nullptr);
+        layers.events["P2"] = primitives.forward_async(layers.p2, 1, &layers.inputs["P2"], 0, nullptr, 1, &layers.outputs["P2"], 2, c2, nullptr);
         layers.events["N2"] = primitives.forward_async(layers.n2, 1, &layers.outputs["P2"], 0, nullptr, 1, &layers.outputs["N2"], 0, nullptr, nullptr);
         nn_opaque_data_t *c3_params[2] = { layers.weights["C3"], layers.bias["C3"] };
         layers.events["C3"] = primitives.forward_async(layers.c3, 1, &layers.outputs["N2"], 2, c3_params, 1, &layers.outputs["C3"], 1, &layers.events["N2"], nullptr);
@@ -743,7 +756,7 @@ class primitives_workload_caffenet_int16 : public primitives_workload_base {
         nn_event_t c5[2];
         c5[0] = layers.events["C5_1"];
         c5[1] = layers.events["C5_2"];
-        layers.events["P5"] = primitives.forward_async(layers.p5, 1, &layers.outputs["C5"], 0, nullptr, 1, &layers.outputs["P5"], 2, c5, nullptr);
+        layers.events["P5"] = primitives.forward_async(layers.p5, 1, &layers.inputs["P5"], 0, nullptr, 1, &layers.outputs["P5"], 2, c5, nullptr);
         layers.events["convert_c5fc6"] = primitives.forward_async(layers.convert5, 1, &layers.outputs["P5"], 0, nullptr, 1, &layers.inputs["FC6"], 1, &layers.events["P5"], nullptr);
         nn_opaque_data_t *fc6_params[2] = { layers.weights["FC6"], layers.bias["FC6"] };
         layers.events["FC6"] = primitives.forward_async(layers.fc6, 1, &layers.inputs["FC6"], 2, fc6_params, 1, &layers.outputs["FC6"], 1, &layers.events["convert_c5fc6"], nullptr);

@@ -27,7 +27,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cassert>
 #include <iostream>
 #include <vector>
-#include <utility>  
+#include <utility>
 #include <stdexcept>
 #include <random>
 #include <string>
@@ -38,51 +38,51 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace device_gpu
 {
-    static std::string kernelSource = R"( 
-        __kernel void merged_convolve_maxpoolND(__global floatx* output, __global floatx* input, filter_qualifier floatx* filter, __global floatx* biases, unsigned int batch_output_offset)   
-    { 
-        const unsigned int x_pool = get_global_id(0);                                            
-        const unsigned int y_pool = get_global_id(1);                                            
-        const unsigned int z = get_global_id(2);                                                 
-                                                                                                 
-        const unsigned int x_conv = x_pool * POOL_WINDOW_SIZE;                                   
-        const unsigned int y_conv = y_pool * POOL_WINDOW_SIZE;                                   
-                                                                                                 
-        const unsigned int filter_size = FILTER_DEPTH*FILTER_HEIGHT*FILTER_WIDTH;                
-                                                                                                 
-        float cur_max;  
-        const float bias = biases[z];                                                                                         
-        for (unsigned x = x_conv;  x < (x_conv + POOL_WINDOW_SIZE); x++) 
-        { 
-            for (unsigned y = y_conv; y < (y_conv + POOL_WINDOW_SIZE); y++)            
-            {                                                                          
-                unsigned int filter_offset = z * filter_size;                          
-                floatx dotProd = 0.0f;                                                
+    static std::string kernelSource = R"(
+        __kernel void merged_convolve_maxpoolND(__global floatx* output, __global floatx* input, filter_qualifier floatx* filter, __global floatx* biases, unsigned int batch_output_offset)
+    {
+        const unsigned int x_pool = get_global_id(0);
+        const unsigned int y_pool = get_global_id(1);
+        const unsigned int z = get_global_id(2);
+
+        const unsigned int x_conv = x_pool * POOL_WINDOW_SIZE;
+        const unsigned int y_conv = y_pool * POOL_WINDOW_SIZE;
+
+        const unsigned int filter_size = FILTER_DEPTH*FILTER_HEIGHT*FILTER_WIDTH;
+
+        float cur_max;
+        const float bias = biases[z];
+        for (unsigned x = x_conv;  x < (x_conv + POOL_WINDOW_SIZE); x++)
+        {
+            for (unsigned y = y_conv; y < (y_conv + POOL_WINDOW_SIZE); y++)
+            {
+                unsigned int filter_offset = z * filter_size;
+                floatx dotProd = 0.0f;
                 unsigned int input_offset = STRIDEY * y * INPUT_WIDTH + x * STRIDEX;
-                                                                                       
-                for (unsigned int k = 0; k< FILTER_DEPTH; ++k) {                       
-                    for (unsigned int j = 0; j< FILTER_HEIGHT; ++j) {                  
-                        for (unsigned int i = 0; i< FILTER_WIDTH; ++i) {               
-                            floatx signal;                                             
-                            signal = input[input_offset];                          
-                            dotProd += signal * filter[filter_offset];             
-                            ++input_offset;                                            
-                            ++filter_offset;                                           
-                        }                                                              
-                        input_offset += INPUT_WIDTH - FILTER_WIDTH;                    
-                    }                                                                  
-                    input_offset += (INPUT_HEIGHT - FILTER_HEIGHT)*INPUT_WIDTH;        
-                }                                                                      
-                if(x == x_conv && y == y_conv)                                         
-                    cur_max = activation_function(dotProd + bias);               
-                else                                                                   
-                    cur_max = max(cur_max, activation_function(dotProd + bias)); 
-            }                                                                          
-        }                                                                              
-                                                                                       
+
+                for (unsigned int k = 0; k< FILTER_DEPTH; ++k) {
+                    for (unsigned int j = 0; j< FILTER_HEIGHT; ++j) {
+                        for (unsigned int i = 0; i< FILTER_WIDTH; ++i) {
+                            floatx signal;
+                            signal = input[input_offset];
+                            dotProd += signal * filter[filter_offset];
+                            ++input_offset;
+                            ++filter_offset;
+                        }
+                        input_offset += INPUT_WIDTH - FILTER_WIDTH;
+                    }
+                    input_offset += (INPUT_HEIGHT - FILTER_HEIGHT)*INPUT_WIDTH;
+                }
+                if(x == x_conv && y == y_conv)
+                    cur_max = activation_function(dotProd + bias);
+                else
+                    cur_max = max(cur_max, activation_function(dotProd + bias));
+            }
+        }
+
     const unsigned int pool_output_stride = (OUTPUT_WIDTH + OWPAD) * (OUTPUT_HEIGHT + OHPAD);
-                                                                                                                   
-    output[batch_output_offset + OUT_BUFF_OFFSET + z * pool_output_stride + y_pool*(OUTPUT_WIDTH + OWPAD) + x_pool] = cur_max;  
+
+    output[batch_output_offset + OUT_BUFF_OFFSET + z * pool_output_stride + y_pool*(OUTPUT_WIDTH + OWPAD) + x_pool] = cur_max;
 })";
 
 bool operator < ( const conv_maxpool_kernel_key &A, const conv_maxpool_kernel_key &B )
@@ -309,7 +309,7 @@ conv_maxpool_kernel_key ocl_toolkit::prepare_conv_maxpool_kernel(
 
         extra_compile_args += " -DSTRIDEX=" + std::to_string( stride_x );
         extra_compile_args += " -DSTRIDEY=" + std::to_string( stride_y );
-       
+
         extra_compile_args += " -DPOOL_WINDOW_SIZE=" + std::to_string( pool_window_size_x );
         extra_compile_args += " -DPOOL_WINDOW_STRIDE=" + std::to_string( pool_stride_x );
 
@@ -390,7 +390,7 @@ conv_maxpool_kernel_key ocl_toolkit::prepare_conv_maxpool_kernel(
     return conv_maxpool_kernel_key_to_use;
 }
 ////////////////////////////////////////////////////////////////////////////////////////////
-void ocl_toolkit::convolve_maxpool( 
+void ocl_toolkit::convolve_maxpool(
     nn_cl_data            *output,
     nn_cl_data            *input,
     nn_cl_data            *filter,
@@ -421,7 +421,7 @@ void ocl_toolkit::convolve_maxpool(
 
     // Get Kernel for a job
     auto g_kit =
-        m_conv_maxpool_kernels.find( prepare_conv_maxpool_kernel( 
+        m_conv_maxpool_kernels.find( prepare_conv_maxpool_kernel(
                                                   output_width,                  // output_width,
                                                   output_height,                 // output_height,
                                                   input_width,                   // input_width,

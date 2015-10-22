@@ -28,7 +28,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "device/common/nn_workload_data.h"
 #include "device/cpu/api_internal/nn_device_interface_0_internal.h"
 #include "layer_convolution_avx2.h"
+#include "layer_convolution_avx2_batch24n.h"
 #include "helper_zxyn_f32.h"
+#include "jit_conv_3ifs.h"
 
 #include <immintrin.h>
 #include <string.h>
@@ -36,6 +38,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <thread>
 #include <vector>
 #include <tuple>
+#include <iostream>
 #include "device/cpu/api_internal/data_helper.h"
 
 // Pragmas inside macros.
@@ -169,29 +172,29 @@ const uint32_t C_slice_size = 2 * C_simd_width;
 
 template<bool                  T_exact_match,
         NN_ACTIVATION_FUNCTION T_activation,
-        uint32_t               T_unroll_times               = 0, 
-        uint32_t               T_input_width                = 0, 
-        uint32_t               T_input_height               = 0, 
-        uint32_t               T_input_feature_maps         = 0, 
-        uint32_t               T_input_fmap_view_start      = 0, 
-        uint32_t               T_input_fmap_view_length     = 0, 
-        uint32_t               T_kernel_in_fmap_view_start  = 0, 
+        uint32_t               T_unroll_times               = 0,
+        uint32_t               T_input_width                = 0,
+        uint32_t               T_input_height               = 0,
+        uint32_t               T_input_feature_maps         = 0,
+        uint32_t               T_input_fmap_view_start      = 0,
+        uint32_t               T_input_fmap_view_length     = 0,
+        uint32_t               T_kernel_in_fmap_view_start  = 0,
         uint32_t               T_kernel_width               = 0,
-        uint32_t               T_kernel_height              = 0, 
-        uint32_t               T_kernel_stride_x            = 0, 
+        uint32_t               T_kernel_height              = 0,
+        uint32_t               T_kernel_stride_x            = 0,
         uint32_t               T_kernel_stride_y            = 0,
         uint32_t               T_output_width               = 0,
         uint32_t               T_output_height              = 0,
         uint32_t               T_output_feature_maps        = 0>
 void convolve_internal(
-    const nn::workload_data<float> *input_view,
+    const nn::workload_data<> *input_view,
     const size_t center_offset_x,
     const size_t center_offset_y,
     const int32_t stride_x,
     const int32_t stride_y,
-    const nn::workload_data<float> *weights,
-    const nn::workload_data<float> *bias,
-    nn::workload_data<float> *output_view)
+    const nn::workload_data<> *weights,
+    const nn::workload_data<> *bias,
+    nn::workload_data<> *output_view)
 {
     float* input = (float*)input_view->parent->data_buffer;
     float* output = (float*)output_view->parent->data_buffer;
@@ -215,60 +218,66 @@ void convolve_internal(
 
     const auto kernel_center_x = center_offset_x;
     const auto kernel_center_y = center_offset_y;
-    
+
     const auto output_fm_view_start = output_view->view_begin.t[NN_DATA_COORD_z];
     const auto output_fm_view_end = output_view->view_end.t[NN_DATA_COORD_z];
-    
+
     const auto output_row_view_start = output_view->view_begin.t[NN_DATA_COORD_y];
     const auto output_row_view_end = output_view->view_end.t[NN_DATA_COORD_y];
-    
+
     const auto output_column_view_start = output_view->view_begin.t[NN_DATA_COORD_x];
     const auto output_column_view_end = output_view->view_end.t[NN_DATA_COORD_x];
-    
+
     const auto input_column_view_start = input_view->view_begin.t[NN_DATA_COORD_x] - kernel_center_x;
     const auto input_row_view_start = input_view->view_begin.t[NN_DATA_COORD_y] - kernel_center_y;
-    
+
     const auto output_view_width = output_column_view_end - output_column_view_start + 1;
-    
+
     const auto output_row_size      = output_feature_map_width * num_output_feature_maps;
     const auto input_row_size       = input_feature_map_width * num_input_feature_maps;
     const auto weight_offset        = weights->parent->lengths.t[NN_DATA_COORD_z] * kernel_width*kernel_height * C_slice_size;
-    
+
     const auto num_blocks_full      = output_view_width / 6;
     const auto partial_block_size   = output_view_width % 6;
-    
+
     const auto output_image_view_start = output_view->view_begin.t[NN_DATA_COORD_n];
     const auto output_image_view_end = output_view->view_end.t[NN_DATA_COORD_n];
-    
+
     const auto input_image_size = input_row_size * input_feature_map_height;
     const auto output_image_size = output_row_size * output_feature_map_height;
 
     const auto kernel_out_fmap_view_start = weights->view_begin.t[NN_DATA_COORD_q] * C_slice_size;
-    
+
     for(auto out_image = output_image_view_start; out_image <= output_image_view_end; ++out_image)
     {
+        if (out_image == 31)
+            int y = 0;
+
         auto input_image_offset = out_image*input_image_size;
         auto output_image_offset = out_image*output_image_size;
-        
-        for (auto out_feature_map = output_fm_view_start, kernel_feature_map = kernel_out_fmap_view_start, bias_feature_map = bias_view_start; 
-            out_feature_map <= output_fm_view_end; 
+
+        for (auto out_feature_map = output_fm_view_start, kernel_feature_map = kernel_out_fmap_view_start, bias_feature_map = bias_view_start;
+            out_feature_map <= output_fm_view_end;
             out_feature_map += C_slice_size, kernel_feature_map += C_slice_size, bias_feature_map += C_slice_size)
         {
             for (auto output_row = output_row_view_start, input_row = 0U; output_row <= output_row_view_end; output_row++, input_row++)
             {
+                if (output_row == 48)
+                    int t = 0;
+
                 const auto inp_h        = input_row * kernel_stride_y + input_row_view_start;
                 const auto out_offset1  = output_row * output_row_size;
                 const auto inp_offset1  = inp_h * input_row_size;
-                
+
                 auto out_offset         = out_offset1 + output_column_view_start * num_output_feature_maps + output_image_offset;
                 auto inp_offset_base    = inp_offset1 + input_column_view_start * num_input_feature_maps + input_image_offset;
-                
+
                 for (auto block = 0U; block < num_blocks_full; block++) {
                     NN_CONVOLVE_OPTIMIZED_BLOCK(6);
                     inp_offset_base += 6 * num_input_feature_maps * kernel_stride_x;
                     out_offset += 6 * num_output_feature_maps;
                 }
-                
+
                 switch (partial_block_size)
                 {
                 case 0: break;
@@ -289,30 +298,30 @@ void convolve_internal(
 }
 
 using optimized_layer_map_t = std::map<
-    std::tuple<NN_ACTIVATION_FUNCTION, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t>, 
+    std::tuple<NN_ACTIVATION_FUNCTION, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t>,
     decltype(convolve_internal<false, NN_ACTIVATION_FUNCTION_NONE>)*>;
 
 template<NN_ACTIVATION_FUNCTION T_activation,
-         uint32_t T_input_width, uint32_t T_input_height, uint32_t T_input_feature_maps, 
+         uint32_t T_input_width, uint32_t T_input_height, uint32_t T_input_feature_maps,
          uint32_t T_input_fmap_view_start, uint32_t T_input_fmap_view_length, uint32_t T_kernel_in_fmap_view_start,
          uint32_t T_kernel_width, uint32_t T_kernel_height, uint32_t T_kernel_stride_x, uint32_t T_kernel_stride_y,
          uint32_t T_output_width, uint32_t T_output_height, uint32_t T_output_feature_maps>
 optimized_layer_map_t::value_type prepare_entry()
 {
-    return { 
-        optimized_layer_map_t::key_type{ 
+    return {
+        optimized_layer_map_t::key_type{
             T_activation,
-            T_input_width, T_input_height, T_input_feature_maps, 
-            T_input_fmap_view_start, T_input_fmap_view_length, T_kernel_in_fmap_view_start, 
-            T_kernel_width, T_kernel_height, T_kernel_stride_x, T_kernel_stride_y,
-            T_output_width, T_output_height, T_output_feature_maps }, 
-        convolve_internal<
-            true, 
-            T_activation, 
-            (T_input_fmap_view_length % 8 == 0) ? 8 : T_input_fmap_view_length,
-            T_input_width, T_input_height, T_input_feature_maps, 
+            T_input_width, T_input_height, T_input_feature_maps,
             T_input_fmap_view_start, T_input_fmap_view_length, T_kernel_in_fmap_view_start,
-            T_kernel_width, T_kernel_height, T_kernel_stride_x, T_kernel_stride_y, 
+            T_kernel_width, T_kernel_height, T_kernel_stride_x, T_kernel_stride_y,
+            T_output_width, T_output_height, T_output_feature_maps },
+        convolve_internal<
+            true,
+            T_activation,
+            (T_input_fmap_view_length % 8 == 0) ? 8 : T_input_fmap_view_length,
+            T_input_width, T_input_height, T_input_feature_maps,
+            T_input_fmap_view_start, T_input_fmap_view_length, T_kernel_in_fmap_view_start,
+            T_kernel_width, T_kernel_height, T_kernel_stride_x, T_kernel_stride_y,
             T_output_width, T_output_height, T_output_feature_maps> };
 }
 
@@ -356,10 +365,10 @@ optimized_layer_map_t optimized_layer_map =
 };
 
 void nn_convolve_naive(
-    const nn::workload_data<float> *input_view,
-    const nn::workload_data<float> *output_view,
-    const nn::workload_data<float> *bias_view,
-    const nn::workload_data<float> *kernel_view,
+    const nn::workload_data<> *input_view,
+    const nn::workload_data<> *output_view,
+    const nn::workload_data<> *bias_view,
+    const nn::workload_data<> *kernel_view,
     uint32_t center_offset_x,
     uint32_t center_offset_y,
     uint32_t kernel_stride_x,
@@ -390,10 +399,10 @@ void nn_convolve_naive(
             {
                 for (uint32_t input_column = input_view->view_begin.t[NN_DATA_COORD_x] - center_offset_x, output_column = output_view->view_begin.t[NN_DATA_COORD_x]; output_column <= output_view->view_end.t[NN_DATA_COORD_x]; input_column += kernel_stride_x, output_column++)
                 {
-                    const uint32_t out_base = 
-                          batch*output_feature_map_width*output_feature_map_height*num_output_feature_maps 
-                        + output_row*output_feature_map_width*num_output_feature_maps 
-                        + output_column*num_output_feature_maps 
+                    const uint32_t out_base =
+                          batch*output_feature_map_width*output_feature_map_height*num_output_feature_maps
+                        + output_row*output_feature_map_width*num_output_feature_maps
+                        + output_column*num_output_feature_maps
                         + output_feature_map;
 
                     __m256 accumulator0 = _mm256_setzero_ps();
@@ -409,16 +418,16 @@ void nn_convolve_naive(
                                 uint32_t kernel_output_map_rem = output_feature_map % C_slice_size;
 
                                 __m256 weight0 = _mm256_load_ps(  kernel_ptr
-                                                                + kernel_row*C_slice_size*kernel_width*kernel_depth 
-                                                                + kernel_input_feature_map*C_slice_size 
-                                                                + kernel_column*C_slice_size*kernel_depth 
-                                                                + kernel_output_map_div*kernel_width*kernel_height*kernel_depth*C_slice_size 
+                                                                + kernel_row*C_slice_size*kernel_width*kernel_depth
+                                                                + kernel_input_feature_map*C_slice_size
+                                                                + kernel_column*C_slice_size*kernel_depth
+                                                                + kernel_output_map_div*kernel_width*kernel_height*kernel_depth*C_slice_size
                                                                 + kernel_output_map_rem);
 
-                                __m256 input = _mm256_broadcast_ss(  input_ptr 
-                                                                   + batch*input_feature_map_width*input_feature_map_height*num_input_feature_maps 
-                                                                   + (input_row+kernel_row)*input_feature_map_width*num_input_feature_maps 
-                                                                   + (input_column+kernel_column)*num_input_feature_maps 
+                                __m256 input = _mm256_broadcast_ss(  input_ptr
+                                                                   + batch*input_feature_map_width*input_feature_map_height*num_input_feature_maps
+                                                                   + (input_row+kernel_row)*input_feature_map_width*num_input_feature_maps
+                                                                   + (input_column+kernel_column)*num_input_feature_maps
                                                                    + input_feature_map);
 
                                 accumulator0 = _mm256_fmadd_ps(weight0, input, accumulator0);
@@ -432,11 +441,11 @@ void nn_convolve_naive(
                     if(activation == NN_ACTIVATION_FUNCTION_RELU)
                         accumulator0 = _mm256_max_ps(_mm256_setzero_ps(), accumulator0);
 
-                    _mm256_store_ps(  output_ptr 
-                                    + batch*output_feature_map_width*output_feature_map_height*num_output_feature_maps 
-                                    + output_row*output_feature_map_width*num_output_feature_maps 
-                                    + output_column*num_output_feature_maps 
-                                    + output_feature_map 
+                    _mm256_store_ps(  output_ptr
+                                    + batch*output_feature_map_width*output_feature_map_height*num_output_feature_maps
+                                    + output_row*output_feature_map_width*num_output_feature_maps
+                                    + output_column*num_output_feature_maps
+                                    + output_feature_map
                                     , accumulator0);
                 }
             }
@@ -446,15 +455,15 @@ void nn_convolve_naive(
 
 
 template <NN_ACTIVATION_FUNCTION T_activation>
-void run_convolution(const nn::workload_data<float> *input_view,
+void run_convolution(const nn::workload_data<> *input_view,
                      const NN_PADDING_MODE padding,
                      const int32_t center_offset_x,
                      const int32_t center_offset_y,
                      const size_t stride_x,
                      const size_t stride_y,
-                     const nn::workload_data<float> *weights,
-                     const nn::workload_data<float> *bias,
-                     nn::workload_data<float> *output_view) {
+                     const nn::workload_data<> *weights,
+                     const nn::workload_data<> *bias,
+                     nn::workload_data<> *output_view) {
 
     const size_t num_output_feature_maps = output_view->parent->lengths.t[NN_DATA_COORD_z];
     const size_t num_input_feature_maps = input_view->parent->lengths.t[NN_DATA_COORD_z];
@@ -487,36 +496,44 @@ void run_convolution(const nn::workload_data<float> *input_view,
     if (map_element != std::end(optimized_layer_map))
     {
         // Optimized.
-        map_element->second(input_view, center_offset_x, center_offset_y, stride_x, stride_y, weights, bias, output_view);
+        map_element->second(input_view, center_offset_x, center_offset_y, static_cast<int32_t>(stride_x), static_cast<int32_t>(stride_y), weights, bias, output_view);
     }
     else
     {
         if(output_view->get_length(NN_DATA_COORD_z) % C_slice_size == 0) // Generic.
-            convolve_internal<false, T_activation>(input_view, center_offset_x, center_offset_y, stride_x, stride_y, weights, bias, output_view);
+            convolve_internal<false, T_activation>(
+                input_view,
+                static_cast<uint32_t>(center_offset_x),
+                static_cast<uint32_t>(center_offset_y),
+                static_cast<uint32_t>(stride_x),
+                static_cast<uint32_t>(stride_y),
+                weights,
+                bias,
+                output_view);
         else // Special naive version for non16 aligned convolutions' OFM views.
             nn_convolve_naive(
-                input_view, 
-                output_view, 
-                bias, 
+                input_view,
+                output_view,
+                bias,
                 weights,
-                center_offset_x,
-                center_offset_y,
-                stride_x,
-                stride_y,
+                static_cast<uint32_t>(center_offset_x),
+                static_cast<uint32_t>(center_offset_y),
+                static_cast<uint32_t>(stride_x),
+                static_cast<uint32_t>(stride_y),
                 T_activation);
     }
 }
 
-void choose_convolution_padding_mode_and_activation(const nn::workload_data<float> *input,
+void choose_convolution_padding_mode_and_activation(const nn::workload_data<> *input,
                                                     const NN_PADDING_MODE padding,
                                                     const int32_t center_offset_x,
                                                     const int32_t center_offset_y,
                                                     const size_t stride_x,
                                                     const size_t stride_y,
                                                     const nn_argument_activation_t &activation,
-                                                    const nn::workload_data<float> *weights,
-                                                    const nn::workload_data<float> *bias,
-                                                    nn::workload_data<float> *output) {
+                                                    const nn::workload_data<> *weights,
+                                                    const nn::workload_data<> *bias,
+                                                    nn::workload_data<> *output) {
 
     switch (padding)
     {
@@ -554,8 +571,8 @@ void choose_convolution_padding_mode_and_activation(const nn::workload_data<floa
             const int32_t required_center_offset_from_down = weights->parent->lengths.t[NN_DATA_COORD_y] - (required_center_offset_from_up + 1);
 
             // Get number of input elements required along with their absolute end offsets.
-            const int32_t  input_elements_required_x = (output->get_length(NN_DATA_COORD_x) - 1) * stride_x + 1;
-            const int32_t  input_elements_required_y = (output->get_length(NN_DATA_COORD_y) - 1) * stride_y + 1;
+            const int32_t  input_elements_required_x = static_cast<int32_t>((output->get_length(NN_DATA_COORD_x) - 1) * stride_x + 1);
+            const int32_t  input_elements_required_y = static_cast<int32_t>((output->get_length(NN_DATA_COORD_y) - 1) * stride_y + 1);
             const int32_t  input_absolute_end_offset_x = input_base_view_start_x + input_elements_required_x;
             const int32_t  input_absolute_end_offset_y = input_base_view_start_y + input_elements_required_y;
 
@@ -573,16 +590,16 @@ void choose_convolution_padding_mode_and_activation(const nn::workload_data<floa
 
             // Adjust crop for filter strides.
             // For input it should be aligned to stride.
-            const uint32_t input_crop_from_left = (crop_from_left + stride_x - 1) / stride_x * stride_x;
-            const uint32_t input_crop_from_up = (crop_from_up + stride_y - 1) / stride_y * stride_y;
-            const uint32_t input_crop_from_right = (crop_from_right + stride_x - 1) / stride_x * stride_x;
-            const uint32_t input_crop_from_down = (crop_from_down + stride_y - 1) / stride_y * stride_y;
+            const uint32_t input_crop_from_left  = static_cast<uint32_t>((crop_from_left + stride_x - 1) / stride_x * stride_x);
+            const uint32_t input_crop_from_up    = static_cast<uint32_t>((crop_from_up + stride_y - 1) / stride_y * stride_y);
+            const uint32_t input_crop_from_right = static_cast<uint32_t>((crop_from_right + stride_x - 1) / stride_x * stride_x);
+            const uint32_t input_crop_from_down  = static_cast<uint32_t>((crop_from_down + stride_y - 1) / stride_y * stride_y);
 
             // Output crop should be input crop divided by stride.
-            const uint32_t output_crop_from_left = input_crop_from_left / stride_x;
-            const uint32_t output_crop_from_up = input_crop_from_up / stride_y;
-            const uint32_t output_crop_from_right = input_crop_from_right / stride_x;
-            const uint32_t output_crop_from_down = input_crop_from_down / stride_y;
+            const uint32_t output_crop_from_left = static_cast<uint32_t>(input_crop_from_left / stride_x);
+            const uint32_t output_crop_from_up   = static_cast<uint32_t>(input_crop_from_up / stride_y);
+            const uint32_t output_crop_from_right= static_cast<uint32_t>(input_crop_from_right / stride_x);
+            const uint32_t output_crop_from_down = static_cast<uint32_t>(input_crop_from_down / stride_y);
 
             // Prepare cropped views.
             nn_workload_data_coords_t input_view_start(
@@ -622,17 +639,17 @@ void choose_convolution_padding_mode_and_activation(const nn::workload_data<floa
             );
 
             bool valid_optimized_view = false;
-            nn::workload_data<float>* input_subview = nullptr;
-            nn::workload_data<float>* output_subview = nullptr;
+            nn::workload_data<>* input_subview = nullptr;
+            nn::workload_data<>* output_subview = nullptr;
 
             // Run optimized convolution on subview if there is anything to process after crop.
             if (static_cast<int32_t>(output_view_start.t[NN_DATA_COORD_x]) <= static_cast<int32_t>(output_view_end.t[NN_DATA_COORD_x]) &&
                 static_cast<int32_t>(output_view_start.t[NN_DATA_COORD_y]) <= static_cast<int32_t>(output_view_end.t[NN_DATA_COORD_y]))
             {
                 valid_optimized_view = true;
-                input_subview = new nn::workload_data<float>(
-                    *const_cast<nn::workload_data<float> *>(input), input_view_start, input_view_end);
-                output_subview = new nn::workload_data<float>(*output, output_view_start, output_view_end);
+                input_subview = new nn::workload_data<>(
+                    *const_cast<nn::workload_data<> *>(input), input_view_start, input_view_end);
+                output_subview = new nn::workload_data<>(*output, output_view_start, output_view_end);
 
                 switch (activation.function) {
                 case NN_ACTIVATION_FUNCTION_NONE: run_convolution<NN_ACTIVATION_FUNCTION_NONE>(input_subview, padding, center_offset_x, center_offset_y, stride_x, stride_y, weights, bias, output_subview); break;
@@ -652,9 +669,13 @@ void choose_convolution_padding_mode_and_activation(const nn::workload_data<floa
                 const auto kernel_out_fmap_view_start = weights->view_begin.t[NN_DATA_COORD_q] * C_slice_size;
                 const auto bias_view_start = bias->view_begin.t[NN_DATA_COORD_x];
 
-                for (int32_t output_y = output_base_view_start_y; output_y <= output_base_view_end_y; ++output_y)
+                for (int32_t output_y = output_base_view_start_y;
+                      output_y <= output_base_view_end_y;
+                      ++output_y)
                 {
-                    for (int32_t output_x = output_base_view_start_x; output_x <= output_base_view_end_x; ++output_x)
+                    for (int32_t output_x = output_base_view_start_x;
+                          output_x <= output_base_view_end_x;
+                          ++output_x)
                     {
                         if (valid_optimized_view &&
                             output_x >= output_subview->view_begin.t[NN_DATA_COORD_x] && output_x <= output_subview->view_end.t[NN_DATA_COORD_x] &&
@@ -670,14 +691,14 @@ void choose_convolution_padding_mode_and_activation(const nn::workload_data<floa
                         {
                             const auto input_image_offset = num_ifm * ifm_width * ifm_height * out_image;
                             const auto output_image_offset = num_ofm * ofm_width * ofm_height * out_image;
-                            for (auto out_feature_map = output_fm_view_start, kernel_feature_map = kernel_out_fmap_view_start, bias_feature_map = bias_view_start; 
-                                out_feature_map <= output_fm_view_end; 
+                            for (auto out_feature_map = output_fm_view_start, kernel_feature_map = kernel_out_fmap_view_start, bias_feature_map = bias_view_start;
+                                out_feature_map <= output_fm_view_end;
                                 out_feature_map += C_simd_width, kernel_feature_map += C_simd_width, bias_feature_map += C_simd_width)
                             {
 
                                 // Input reading offset for left-upper corner.
-                                int32_t left_up_read_offset_x = (output_x - output_base_view_start_x)*stride_x - required_center_offset_from_left + input_base_view_start_x;
-                                int32_t left_up_read_offset_y = (output_y - output_base_view_start_y)*stride_y - required_center_offset_from_up + input_base_view_start_y;
+                                int32_t left_up_read_offset_x = static_cast<int32_t>((output_x - output_base_view_start_x)*stride_x - required_center_offset_from_left + input_base_view_start_x);
+                                int32_t left_up_read_offset_y = static_cast<int32_t>((output_y - output_base_view_start_y)*stride_y - required_center_offset_from_up + input_base_view_start_y);
 
                                 // Input reading offset for right-bottom corner.
                                 int32_t right_down_read_offset_x = left_up_read_offset_x + kernel_width;
@@ -754,9 +775,8 @@ void choose_convolution_padding_mode_and_activation(const nn::workload_data<floa
             }
 
             // Cleanup dynamic data.
-            // TODO FIX THIS, temp workaround for workload_data bug with multi threading - this is a memory leak currently.
-            delete reinterpret_cast<nn_workload_data_t*>(output_subview);
-            delete reinterpret_cast<nn_workload_data_t*>(input_subview);
+            delete output_subview;
+            delete input_subview;
         }
         break;
     default:
@@ -776,9 +796,9 @@ void sum_over_simd(__m256& acc)
 
 template <size_t T_num_accumulators>
 void run_convolution_backprop_error(
-                    const nn::workload_data<float> *forward_weights_view,
-                    const nn::workload_data<float> *backward_input_view,
-                    nn::workload_data<float> *backward_output_view,
+                    const nn::workload_data<> *forward_weights_view,
+                    const nn::workload_data<> *backward_input_view,
+                    nn::workload_data<> *backward_output_view,
                     uint32_t stride_x,
                     uint32_t stride_y)
 {
@@ -829,8 +849,8 @@ void run_convolution_backprop_error(
                 if((int32_t)input_column - ((int32_t)kernel_w - 1) >= 0) output_width_range_start = (input_column - (kernel_w - 1)) / stride_x + (((input_column - (kernel_w - 1)) % stride_x != 0 ) ? 1 : 0);
                 if((int32_t)input_row - ((int32_t)kernel_h - 1) >= 0) output_height_range_start = (input_row - (kernel_h - 1)) / stride_y + (((input_row - (kernel_h - 1)) % stride_y != 0 ) ? 1 : 0);
 
-                for (uint32_t input_feature_map = in_begin.t[NN_DATA_COORD_z], kernel_input_feature_map = kernel_begin.t[NN_DATA_COORD_z]; 
-                     input_feature_map <= in_end.t[NN_DATA_COORD_z]; 
+                for (uint32_t input_feature_map = in_begin.t[NN_DATA_COORD_z], kernel_input_feature_map = kernel_begin.t[NN_DATA_COORD_z];
+                     input_feature_map <= in_end.t[NN_DATA_COORD_z];
                      input_feature_map += 4, kernel_input_feature_map += 4)
                 {
                     __m256 error_acc_l[T_num_accumulators];
@@ -846,11 +866,11 @@ void run_convolution_backprop_error(
                     uint32_t kernel_input_feature_map_offs = kernel_input_feature_map * convolution_f32_impl::C_slice_size;
 
                     for (int32_t output_row = output_height_range_start;
-                         output_row <= output_height_range_end;
+                         output_row <= static_cast<int32_t>(output_height_range_end);
                          ++output_row)
                     {
                         for (int32_t output_column = output_width_range_start;
-                            output_column <= output_width_range_end;
+                            output_column <= static_cast<int32_t>(output_width_range_end);
                             ++output_column)
                         {
                             // Compute input offset from view beginning (its output base offset as well.)
@@ -860,8 +880,8 @@ void run_convolution_backprop_error(
                             // Check if this output is in the view.
                             if(output_column >= 0 &&
                                output_row >= 0 &&
-                               output_column < output_width &&
-                               output_row < output_height)
+                               output_column < static_cast<int32_t>(output_width) &&
+                               output_row < static_cast<int32_t>(output_height))
                             {
                                 // Compute weight addresses.
                                 uint32_t kernel_column = input_offset_w - output_column * stride_x;
@@ -878,7 +898,7 @@ void run_convolution_backprop_error(
                                                               + kernel_output_feature_map / convolution_f32_impl::C_slice_size * convolution_f32_impl::C_slice_size * forward_weights_view->parent->lengths.t[NN_DATA_COORD_z] * forward_weights_view->parent->lengths.t[NN_DATA_COORD_x] * forward_weights_view->parent->lengths.t[NN_DATA_COORD_y];
 
                                     auto input_base_offset = backward_input_buffer
-                                                             + output_feature_map 
+                                                             + output_feature_map
                                                              + output_column * backward_input_view->parent->lengths.t[NN_DATA_COORD_z]
                                                              + output_row * backward_input_view->parent->lengths.t[NN_DATA_COORD_z] * backward_input_view->parent->lengths.t[NN_DATA_COORD_x]
                                                              + batch * backward_input_view->parent->lengths.t[NN_DATA_COORD_z] * backward_input_view->parent->lengths.t[NN_DATA_COORD_x] * backward_input_view->parent->lengths.t[NN_DATA_COORD_y];
@@ -899,13 +919,13 @@ void run_convolution_backprop_error(
 
                     __m256i mask = _mm256_set_epi32(0, 0, 0, 0, 0, 0, 0, 0xFFFFFFFF);
 
-                    auto output_base_offset = backward_output_buffer 
-                                              + input_feature_map 
+                    auto output_base_offset = backward_output_buffer
+                                              + input_feature_map
                                               + input_column * backward_output_view->parent->lengths.t[NN_DATA_COORD_z]
                                               + input_row * backward_output_view->parent->lengths.t[NN_DATA_COORD_z] * backward_output_view->parent->lengths.t[NN_DATA_COORD_x]
                                               + batch * backward_output_view->parent->lengths.t[NN_DATA_COORD_z] * backward_output_view->parent->lengths.t[NN_DATA_COORD_x] * backward_output_view->parent->lengths.t[NN_DATA_COORD_y];
-                                        
-                    
+
+
                     // Squash 16 values into 1 value and save.
 #pragma unroll(T_num_accumulators)
                     for (auto acc = 0u; acc < T_num_accumulators; ++acc)
@@ -922,9 +942,9 @@ void run_convolution_backprop_error(
 
 template <size_t T_num_accumulators>
 void run_convolution_backprop_weight(
-                    const nn::workload_data<float> *forward_input_view,
-                    const nn::workload_data<float> *backward_input_view,
-                    nn::workload_data<float> *backward_weights_delta_view,
+                    const nn::workload_data<> *forward_input_view,
+                    const nn::workload_data<> *backward_input_view,
+                    nn::workload_data<> *backward_weights_delta_view,
                     uint32_t stride_x,
                     uint32_t stride_y,
                     uint32_t center_offset_x,
@@ -952,11 +972,13 @@ void run_convolution_backprop_weight(
     {
         for (uint32_t kernel_column = kernel_begin.t[NN_DATA_COORD_x]; kernel_column <= kernel_end.t[NN_DATA_COORD_x]; ++kernel_column)
         {
-            for (uint32_t output_feature_map = kernel_begin.t[NN_DATA_COORD_q];
+            for (uint32_t output_feature_map = kernel_begin.t[NN_DATA_COORD_q], backward_out_feature_map = out_begin.t[NN_DATA_COORD_z];
                         output_feature_map <= kernel_end.t[NN_DATA_COORD_q];
-                        ++output_feature_map)
+                        ++output_feature_map, backward_out_feature_map += convolution_f32_impl::C_slice_size)
             {
-                for (uint32_t input_feature_map = kernel_begin.t[NN_DATA_COORD_z]; input_feature_map <= kernel_end.t[NN_DATA_COORD_z]; input_feature_map += 4)
+                for (uint32_t input_feature_map = kernel_begin.t[NN_DATA_COORD_z], forward_in_feature_map = in_begin.t[NN_DATA_COORD_z];
+                     input_feature_map <= kernel_end.t[NN_DATA_COORD_z];
+                     input_feature_map += 4, forward_in_feature_map += 4)
                 {
                     __m256 weight_acc_l[T_num_accumulators];
                     __m256 weight_acc_h[T_num_accumulators];
@@ -977,24 +999,26 @@ void run_convolution_backprop_weight(
                                 output_column <= out_end.t[NN_DATA_COORD_x];
                                 input_column += stride_x, ++output_column)
                         {
-                            for (int32_t batch = (int32_t)in_begin.t[NN_DATA_COORD_n];
+                            for (uint32_t batch = in_begin.t[NN_DATA_COORD_n];
                                     batch <= in_end.t[NN_DATA_COORD_n];
                                     ++batch)
                             {
-                                auto back_input_base_offset = backward_input_buffer 
-                                                              + output_feature_map * convolution_f32_impl::C_slice_size
+                                auto back_input_base_offset = backward_input_buffer
+                                                              + backward_out_feature_map
                                                               + output_column * backward_input_view->parent->lengths.t[NN_DATA_COORD_z]
-                                                              + output_row * backward_input_view->parent->lengths.t[NN_DATA_COORD_z] * backward_input_view->parent->lengths.t[NN_DATA_COORD_x];
+                                                              + output_row * backward_input_view->parent->lengths.t[NN_DATA_COORD_z] * backward_input_view->parent->lengths.t[NN_DATA_COORD_x]
+                                                              + batch * backward_input_view->parent->lengths.t[NN_DATA_COORD_z] * backward_input_view->parent->lengths.t[NN_DATA_COORD_x] * backward_input_view->parent->lengths.t[NN_DATA_COORD_y];
 
-                                auto forw_input_base_offset = forward_input_buffer 
-                                                              + input_feature_map 
+                                auto forw_input_base_offset = forward_input_buffer
+                                                              + forward_in_feature_map
                                                               + (input_column + kernel_column) * forward_input_view->parent->lengths.t[NN_DATA_COORD_z]
-                                                              + (input_row + kernel_row) * forward_input_view->parent->lengths.t[NN_DATA_COORD_z] * forward_input_view->parent->lengths.t[NN_DATA_COORD_x];
+                                                              + (input_row + kernel_row) * forward_input_view->parent->lengths.t[NN_DATA_COORD_z] * forward_input_view->parent->lengths.t[NN_DATA_COORD_x]
+                                                              + batch * forward_input_view->parent->lengths.t[NN_DATA_COORD_z] * forward_input_view->parent->lengths.t[NN_DATA_COORD_x] * forward_input_view->parent->lengths.t[NN_DATA_COORD_y];
 
                                 __m256 backward_input_l = _mm256_load_ps(back_input_base_offset + 0);
                                 __m256 backward_input_h = _mm256_load_ps(back_input_base_offset + 8);
 
-                                
+
 #pragma unroll(T_num_accumulators)
                                 for (auto acc = 0u; acc < T_num_accumulators; ++acc)
                                 {
@@ -1017,7 +1041,7 @@ void run_convolution_backprop_weight(
                                               + kernel_column * convolution_f32_impl::C_slice_size * backward_weights_delta_view->parent->lengths.t[NN_DATA_COORD_z]
                                               + kernel_row * convolution_f32_impl::C_slice_size * backward_weights_delta_view->parent->lengths.t[NN_DATA_COORD_z] * backward_weights_delta_view->parent->lengths.t[NN_DATA_COORD_x]
                                               + output_feature_map * convolution_f32_impl::C_slice_size * backward_weights_delta_view->parent->lengths.t[NN_DATA_COORD_z] * backward_weights_delta_view->parent->lengths.t[NN_DATA_COORD_x] * backward_weights_delta_view->parent->lengths.t[NN_DATA_COORD_y];
-                        
+
 #pragma unroll(T_num_accumulators)
                     for (auto acc = 0u; acc < T_num_accumulators; ++acc)
                     {
@@ -1031,8 +1055,8 @@ void run_convolution_backprop_weight(
 }
 
 void run_convolution_backprop_bias(
-                    const nn::workload_data<float> *backward_input_view,
-                    nn::workload_data<float> *backward_bias_delta_view)
+                    const nn::workload_data<> *backward_input_view,
+                    nn::workload_data<> *backward_bias_delta_view)
 {
     const auto& out_begin = backward_input_view->view_begin;
     const auto& out_end = backward_input_view->view_end;
@@ -1049,9 +1073,9 @@ void run_convolution_backprop_bias(
     // Also compute weights gradient as s[m] * a[m-1]^T and compute bias gradients as s[m].
     // We already have s[m], and a[m-1] is just raw input to this layer.
 
-    for (uint32_t output_feature_map = bias_begin.t[NN_DATA_COORD_x];
+    for (uint32_t output_feature_map = bias_begin.t[NN_DATA_COORD_x], input_feature_map = out_begin.t[NN_DATA_COORD_z];
             output_feature_map <= bias_end.t[NN_DATA_COORD_x];
-            output_feature_map += convolution_f32_impl::C_slice_size)
+            output_feature_map += convolution_f32_impl::C_slice_size, input_feature_map += convolution_f32_impl::C_slice_size)
     {
         __m256 bias_acc0_l = _mm256_setzero_ps();
         __m256 bias_acc0_h = _mm256_setzero_ps();
@@ -1068,16 +1092,16 @@ void run_convolution_backprop_bias(
                         output_column <= out_end.t[NN_DATA_COORD_x];
                         ++output_column)
                 {
-                    __m256 backward_input_l = _mm256_load_ps(backward_input_buffer 
+                    __m256 backward_input_l = _mm256_load_ps(backward_input_buffer
                                                             + 0
-                                                            + output_feature_map 
+                                                            + input_feature_map
                                                             + output_column * backward_input_view->parent->lengths.t[NN_DATA_COORD_z]
                                                             + output_row * backward_input_view->parent->lengths.t[NN_DATA_COORD_z] * backward_input_view->parent->lengths.t[NN_DATA_COORD_x]
                                                             + batch * backward_input_view->parent->lengths.t[NN_DATA_COORD_z] * backward_input_view->parent->lengths.t[NN_DATA_COORD_x] * backward_input_view->parent->lengths.t[NN_DATA_COORD_y]);
 
-                    __m256 backward_input_h = _mm256_load_ps(backward_input_buffer 
+                    __m256 backward_input_h = _mm256_load_ps(backward_input_buffer
                                                             + 8
-                                                            + output_feature_map 
+                                                            + input_feature_map
                                                             + output_column * backward_input_view->parent->lengths.t[NN_DATA_COORD_z]
                                                             + output_row * backward_input_view->parent->lengths.t[NN_DATA_COORD_z] * backward_input_view->parent->lengths.t[NN_DATA_COORD_x]
                                                             + batch * backward_input_view->parent->lengths.t[NN_DATA_COORD_z] * backward_input_view->parent->lengths.t[NN_DATA_COORD_x] * backward_input_view->parent->lengths.t[NN_DATA_COORD_y]);
@@ -1102,9 +1126,9 @@ void run_convolution_backprop_bias(
 }
 
 void choose_template_convolution_backprop_weight(
-                    const nn::workload_data<float> *forward_input_view,
-                    const nn::workload_data<float> *backward_input_view,
-                    nn::workload_data<float> *backward_weights_delta_view,
+                    const nn::workload_data<> *forward_input_view,
+                    const nn::workload_data<> *backward_input_view,
+                    nn::workload_data<> *backward_weights_delta_view,
                     uint32_t stride_x,
                     uint32_t stride_y,
                     uint32_t center_offset_x,
@@ -1122,9 +1146,9 @@ void choose_template_convolution_backprop_weight(
 }
 
 void choose_template_convolution_backprop_error(
-                    const nn::workload_data<float> *forward_weights_view,
-                    const nn::workload_data<float> *backward_input_view,
-                    nn::workload_data<float> *backward_output_view,
+                    const nn::workload_data<> *forward_weights_view,
+                    const nn::workload_data<> *backward_input_view,
+                    nn::workload_data<> *backward_output_view,
                     uint32_t stride_x,
                     uint32_t stride_y,
                     uint32_t num_accumulators)
@@ -1138,29 +1162,29 @@ void choose_template_convolution_backprop_error(
     default: throw std::invalid_argument(""); break;
     }
 }
-using parameters_convolution_f32_avx2 = std::tuple<nn::workload_data<float> *,
+using parameters_convolution_f32_avx2 = std::tuple<nn::workload_data<> *,
                                                    NN_PADDING_MODE,
                                                    size_t,
                                                    size_t,
                                                    size_t,
                                                    size_t,
                                                    const nn_argument_activation_t *,
-                                                   nn::workload_data<float> *,
-                                                   nn::workload_data<float> *,
-                                                   nn::workload_data<float> *>;
+                                                   nn::workload_data<> *,
+                                                   nn::workload_data<> *,
+                                                   nn::workload_data<> *>;
 
 using parameters_convolution_backprop_error_f32_avx2 = std::tuple<
-                                                   const nn::workload_data<float> *,
-                                                   const nn::workload_data<float> *, 
-                                                   nn::workload_data<float> *,
+                                                   const nn::workload_data<> *,
+                                                   const nn::workload_data<> *,
+                                                   nn::workload_data<> *,
                                                    size_t,
                                                    size_t,
                                                    size_t>;
 
 using parameters_convolution_backprop_weight_f32_avx2 = std::tuple<
-                                                   const nn::workload_data<float> *,
-                                                   const nn::workload_data<float> *, 
-                                                   nn::workload_data<float> *,
+                                                   const nn::workload_data<> *,
+                                                   const nn::workload_data<> *,
+                                                   nn::workload_data<> *,
                                                    size_t,
                                                    size_t,
                                                    size_t,
@@ -1168,8 +1192,8 @@ using parameters_convolution_backprop_weight_f32_avx2 = std::tuple<
                                                    size_t>;
 
 using parameters_convolution_backprop_bias_f32_avx2 = std::tuple<
-                                                   const nn::workload_data<float> *, 
-                                                   nn::workload_data<float> *>;
+                                                   const nn::workload_data<> *,
+                                                   nn::workload_data<> *>;
 
 void unpack_convolve_callback_handle(
     void* void_handle)
@@ -1177,8 +1201,8 @@ void unpack_convolve_callback_handle(
     parameters_convolution_f32_avx2& handle = *reinterpret_cast<parameters_convolution_f32_avx2*>(void_handle);
     choose_convolution_padding_mode_and_activation(std::get<0>(handle),
                                                    std::get<1>(handle),
-                                                   std::get<2>(handle),
-                                                   std::get<3>(handle),
+                                                   static_cast<int32_t>(std::get<2>(handle)),
+                                                   static_cast<int32_t>(std::get<3>(handle)),
                                                    std::get<4>(handle),
                                                    std::get<5>(handle),
                                                    *std::get<6>(handle),
@@ -1196,9 +1220,9 @@ void unpack_convolve_callback_handle_backward_error(
                         std::get<0>(handle),
                         std::get<1>(handle),
                         std::get<2>(handle),
-                        std::get<3>(handle),
-                        std::get<4>(handle),
-                        std::get<5>(handle));
+                        static_cast<uint32_t>(std::get<3>(handle)),
+                        static_cast<uint32_t>(std::get<4>(handle)),
+                        static_cast<uint32_t>(std::get<5>(handle)));
 }
 
 void unpack_convolve_callback_handle_backward_weight(
@@ -1210,11 +1234,11 @@ void unpack_convolve_callback_handle_backward_weight(
                                  std::get<0>(handle),
                                  std::get<1>(handle),
                                  std::get<2>(handle),
-                                 std::get<3>(handle),
-                                 std::get<4>(handle),
-                                 std::get<5>(handle),
-                                 std::get<6>(handle),
-                                 std::get<7>(handle));
+                                 static_cast<uint32_t>(std::get<3>(handle)),
+                                 static_cast<uint32_t>(std::get<4>(handle)),
+                                 static_cast<uint32_t>(std::get<5>(handle)),
+                                 static_cast<uint32_t>(std::get<6>(handle)),
+                                 static_cast<uint32_t>(std::get<7>(handle)));
 }
 
 void unpack_convolve_callback_handle_backward_bias(
@@ -1226,14 +1250,33 @@ void unpack_convolve_callback_handle_backward_bias(
                              std::get<1>(handle));
 }
 
-
 } // namespace convolution_f32_impl
 
-void convolution_f32::forward(const nn::workload_data<float> *input_buffer,
-                              const nn::workload_data<float> *weights_buffer,
-                              const nn::workload_data<float> *bias_buffer,
-                              nn::workload_data<float> *output_buffer) 
+void convolution_f32::forward(const nn::workload_data<> *input_buffer,
+                              const nn::workload_data<> *weights_buffer,
+                              const nn::workload_data<> *bias_buffer,
+                              nn::workload_data<> *output_buffer)
 {
+    {
+        auto input = reinterpret_cast<float*>(input_buffer->parent->data_buffer);
+        auto output = reinterpret_cast<float*>(output_buffer->parent->data_buffer);
+        auto weights = reinterpret_cast<float*>(weights_buffer->parent->data_buffer);
+        auto bias = reinterpret_cast<float*>(bias_buffer->parent->data_buffer);
+
+        if (prepared_for == std::make_tuple(input, output, weights, bias)
+            or ((prepared_for == std::make_tuple(nullptr, output, weights, bias))
+                and (input_buffer->get_length() == input_buffer->parent->lengths)))
+        {
+            if (std::get<0>(prepared_for) == nullptr)
+                for (auto& job : compiled->jobs)
+                    for (auto& task : job)
+                        static_cast<jit_convolution_zxyn::op_data_t*>(task.request_handle)
+                            ->input = input;
+            for (auto job : compiled->jobs)
+                device->thread_pool.push_job(job);
+            return;
+        }
+    }
     auto num_output_fm_items =
         (output_buffer->view_end.t[NN_DATA_COORD_z] - output_buffer->view_begin.t[NN_DATA_COORD_z] + 1) /
         convolution_f32_impl::C_slice_size;
@@ -1257,10 +1300,10 @@ void convolution_f32::forward(const nn::workload_data<float> *input_buffer,
     else
     {
         // Full cores utilization version.
-        std::vector<nn::workload_data<float> *> input_views(total_workers);
-        std::vector<nn::workload_data<float> *> weight_views(total_workers);
-        std::vector<nn::workload_data<float> *> bias_views(total_workers);
-        std::vector<nn::workload_data<float> *> output_views(total_workers);
+        std::vector<nn::workload_data<> *> input_views(total_workers);
+        std::vector<nn::workload_data<> *> weight_views(total_workers);
+        std::vector<nn::workload_data<> *> bias_views(total_workers);
+        std::vector<nn::workload_data<> *> output_views(total_workers);
 
         const auto cpp_master_input = input_buffer;
         const auto cpp_master_output = output_buffer;
@@ -1332,14 +1375,14 @@ void convolution_f32::forward(const nn::workload_data<float> *input_buffer,
                     weights_view_end.t[NN_DATA_COORD_p] = num_output_fm_items_remainder - 1;
                 }
 
-                input_views[item_in_pool] = 
-                    new nn::workload_data<float>(const_cast<nn::workload_data<float>&>(*cpp_master_input), input_view_begin, input_view_end);
+                input_views[item_in_pool] =
+                    new nn::workload_data<>(const_cast<nn::workload_data<>&>(*cpp_master_input), input_view_begin, input_view_end);
 
                 output_views[item_in_pool] =
-                    new nn::workload_data<float>(*cpp_master_output, output_view_begin, output_view_end);
+                    new nn::workload_data<>(*cpp_master_output, output_view_begin, output_view_end);
 
                 weight_views[item_in_pool] =
-                    new nn::workload_data<float>(const_cast<nn::workload_data<float>&>(*cpp_master_weights), weights_view_begin, weights_view_end);
+                    new nn::workload_data<>(const_cast<nn::workload_data<>&>(*cpp_master_weights), weights_view_begin, weights_view_end);
 
                 // Use biases.
                 if (bias_buffer != nullptr)
@@ -1370,7 +1413,7 @@ void convolution_f32::forward(const nn::workload_data<float> *input_buffer,
                     }
 
                     bias_views[item_in_pool] =
-                        new nn::workload_data<float>(const_cast<nn::workload_data<float>&>(*cpp_master_biases), bias_view_begin, bias_view_end);
+                        new nn::workload_data<>(const_cast<nn::workload_data<>&>(*cpp_master_biases), bias_view_begin, bias_view_end);
                 } else {
                     bias_views[item_in_pool] = nullptr;
                 }
@@ -1412,23 +1455,113 @@ void convolution_f32::forward(const nn::workload_data<float> *input_buffer,
     }
 }
 
+void convolution_f32::prepare_forward(
+    const nn::workload_data<> *input_buffer,
+    const nn::workload_data<> *weights_buffer,
+    const nn::workload_data<> *bias_buffer,
+    nn::workload_data<> *output_buffer)
+{
+    prepared_for = std::make_tuple(nullptr, nullptr, nullptr, nullptr);
+    if (output_buffer->get_length(NN_DATA_COORD_z) % 16 != 0) return;
+    if (input_buffer->get_length() != input_buffer->parent->lengths) return;
+    if (output_buffer->get_length() != output_buffer->parent->lengths) return;
+    if (center_offset_x != 0) return;
+    if (center_offset_y != 0) return;
+    if (batch_size % 24 != 0) return;
+
+    auto input = reinterpret_cast<float*>(input_buffer->parent->data_buffer);
+    auto output = reinterpret_cast<float*>(output_buffer->parent->data_buffer);
+    auto weights = reinterpret_cast<float*>(weights_buffer->parent->data_buffer);
+    auto bias = reinterpret_cast<float*>(bias_buffer->parent->data_buffer);
+    compiled.reset(new jit_convolution_zxyn(
+            batch_size,
+            activation.function == NN_ACTIVATION_FUNCTION_RELU,
+            output,
+            output_size_x,
+            output_size_y,
+            output_size_z,
+            input_buffer->get_length(NN_DATA_COORD_x),
+            input_buffer->get_length(NN_DATA_COORD_y),
+            input_size_z,
+            stride_x,
+            stride_y,
+            weights,
+            kernel_w,
+            kernel_h,
+            bias));
+    prepared_for = std::make_tuple(input, output, weights, bias);
+}
+
+void convolution_f32::update_bias_by_linear_factors(
+    std::vector<float> arithmetic_params,
+    const std::vector<const nn_workload_data_t *> &parameters) const
+{
+    auto weights_buffer = reinterpret_cast<const nn::workload_data<> *>(parameters[0]);
+    auto bias_buffer = reinterpret_cast<const nn::workload_data<> *>(parameters[1]);
+    auto bias = reinterpret_cast<float*>(bias_buffer->parent->data_buffer);
+    auto weights = reinterpret_cast<float*>(weights_buffer->parent->data_buffer);
+
+    assert(arithmetic_params.size() == input_size_z);
+
+    using namespace convolution_f32_impl;
+
+    for (auto ofeat = 0u; ofeat < output_size_z; ++ofeat)
+    {
+        auto oblock = ofeat / C_slice_size;
+        auto oinblock = ofeat % C_slice_size;
+        auto bias_update = 0.0f;
+        for (auto y = 0u; y < kernel_h; ++y)
+        {
+            for (auto x = 0u; x < kernel_w; ++x)
+            {
+                for (auto z = 0u; z < input_size_z; ++z)
+                {
+                    auto weights_index = (((oblock * kernel_h
+                        + y) * kernel_w
+                        + x) * input_size_z
+                        + z) * C_slice_size + oinblock;
+                        
+                    bias_update += arithmetic_params[z] * weights[weights_index];
+                }
+            }
+        }
+        bias[ofeat] += bias_update;
+    }
+}
+
 void convolution_f32::forward(const std::vector<const nn_workload_data_t *> &inputs,
                               const std::vector<const nn_workload_data_t *> &parameters,
-                              const std::vector<nn_workload_data_t *> &outputs) {
+                              const std::vector<nn_workload_data_t *> &outputs)
+{
     assert(inputs.size() == 1);
     assert(parameters.size() == 2);
     assert(outputs.size() == 1);
 
-    forward(reinterpret_cast<const nn::workload_data<float> *>(inputs[0]),
-            reinterpret_cast<const nn::workload_data<float> *>(parameters[0]),
-            reinterpret_cast<const nn::workload_data<float> *>(parameters[1]),
-            reinterpret_cast<nn::workload_data<float> *>(outputs[0]));
+    forward(reinterpret_cast<const nn::workload_data<> *>(inputs[0]),
+            reinterpret_cast<const nn::workload_data<> *>(parameters[0]),
+            reinterpret_cast<const nn::workload_data<> *>(parameters[1]),
+            nn::workload_data_cast<>(outputs[0]));
+}
+
+void convolution_f32::prepare_forward(
+    const std::vector<const nn_workload_data_t *> &inputs,
+    const std::vector<const nn_workload_data_t *> &parameters,
+    const std::vector<nn_workload_data_t *> &outputs)
+{
+    assert(inputs.size() == 1);
+    assert(parameters.size() == 2);
+    assert(outputs.size() == 1);
+
+    prepare_forward(reinterpret_cast<const nn::workload_data<> *>(inputs[0]),
+                    reinterpret_cast<const nn::workload_data<> *>(parameters[0]),
+                    reinterpret_cast<const nn::workload_data<> *>(parameters[1]),
+                    nn::workload_data_cast<>(outputs[0]));
 }
 
 void convolution_f32::backward_input_delta(
-                               const nn::workload_data<float> *forward_weights_view,
-                               const nn::workload_data<float> *backward_input_view,
-                               nn::workload_data<float> *backward_output_view)
+                               const nn::workload_data<> *forward_weights_view,
+                               const nn::workload_data<> *backward_input_view,
+                               nn::workload_data<> *backward_output_view)
 {
     auto num_input_fm_items = backward_output_view->view_end.t[NN_DATA_COORD_z] - backward_output_view->view_begin.t[NN_DATA_COORD_z] + 1;
     auto num_accumulators = 1;
@@ -1469,8 +1602,8 @@ void convolution_f32::backward_input_delta(
         backward_output_view->view_end.t[NN_DATA_COORD_q]
     );
 
-    nn::workload_data<float> backward_output_whole_buffer(backward_output_view->parent->data_buffer, backward_output_view->parent->lengths, backward_output_view->parent->layout);
-    nn::workload_data<float> backward_output_no_padding_view(backward_output_whole_buffer, begin, end);
+    nn::workload_data<> backward_output_whole_buffer(backward_output_view->parent->data_buffer, backward_output_view->parent->lengths, backward_output_view->parent->layout);
+    nn::workload_data<> backward_output_no_padding_view(backward_output_whole_buffer, begin, end);
 
     const auto num_batch_items =
         (backward_output_view->view_end.t[NN_DATA_COORD_n] - backward_output_view->view_begin.t[NN_DATA_COORD_n] + 1);
@@ -1484,14 +1617,15 @@ void convolution_f32::backward_input_delta(
             forward_weights_view,
             backward_input_view,
             &backward_output_no_padding_view,
-            stride_x,
-            stride_y,
-            num_accumulators);
+            static_cast<uint32_t>(stride_x),
+            static_cast<uint32_t>(stride_y),
+            static_cast<uint32_t>(num_accumulators));
     }
     else
     {
         // Full cores utilization version.
-        std::vector<nn::workload_data<float> *> backprop_output_delta_views(total_workers);
+        std::vector<nn::workload_data<> *> backprop_output_delta_views(total_workers);
+        std::vector<nn::workload_data<> *> backprop_weight_views(total_workers);
 
         // Fill slave work items.
         for (auto input_fm_item = 0u; input_fm_item < num_input_fm_items; ++input_fm_item)
@@ -1518,9 +1652,28 @@ void convolution_f32::backward_input_delta(
                     backward_output_no_padding_view.get_length(NN_DATA_COORD_q) - 1
                 );
 
-                backprop_output_delta_views[item_in_pool] =
-                    new nn::workload_data<float>(backward_output_no_padding_view, output_view_begin, output_view_end);
+                nn_workload_data_coords_t weight_view_begin(
+                    0,
+                    0,
+                    0,
+                    input_fm_item * num_accumulators,
+                    0,
+                    0
+                );
+                nn_workload_data_coords_t weight_view_end(
+                    forward_weights_view->get_length(NN_DATA_COORD_n) - 1,
+                    forward_weights_view->get_length(NN_DATA_COORD_x) - 1,
+                    forward_weights_view->get_length(NN_DATA_COORD_y) - 1,
+                    (input_fm_item+1) * num_accumulators - 1,
+                    forward_weights_view->get_length(NN_DATA_COORD_p) - 1,
+                    forward_weights_view->get_length(NN_DATA_COORD_q) - 1
+                );
 
+                backprop_output_delta_views[item_in_pool] =
+                    new nn::workload_data<>(backward_output_no_padding_view, output_view_begin, output_view_end);
+
+                backprop_weight_views[item_in_pool] =
+                    new nn::workload_data<>(*forward_weights_view, weight_view_begin, weight_view_end);
             }
         }
 
@@ -1531,7 +1684,7 @@ void convolution_f32::backward_input_delta(
         for (auto item_in_pool = 0u; item_in_pool < total_workers; ++item_in_pool)
         {
             request_handles[item_in_pool] = std::make_tuple(
-                                                            forward_weights_view,
+                                                            backprop_weight_views[item_in_pool],
                                                             backward_input_view,
                                                             backprop_output_delta_views[item_in_pool],
                                                             stride_x,
@@ -1548,17 +1701,18 @@ void convolution_f32::backward_input_delta(
         // Cleanup dynamic memory.
         for (auto item_in_pool = 0u; item_in_pool < total_workers; ++item_in_pool)
         {
+            delete backprop_weight_views[item_in_pool];
             delete backprop_output_delta_views[item_in_pool];
         }
     }
 }
 
 void convolution_f32::backward_bias_delta(
-                               const nn::workload_data<float> *backward_input_view,
-                               nn::workload_data<float> *backward_bias_delta_view)
+                               const nn::workload_data<> *backward_input_view,
+                               nn::workload_data<> *backward_bias_delta_view)
 {
     const auto num_output_fm_items =
-        (backward_bias_delta_view->view_end.t[NN_DATA_COORD_x] - backward_bias_delta_view->view_begin.t[NN_DATA_COORD_x] + 1) / convolution_f32_impl::C_slice_size;
+        (backward_input_view->view_end.t[NN_DATA_COORD_z] - backward_input_view->view_begin.t[NN_DATA_COORD_z] + 1) / convolution_f32_impl::C_slice_size;
 
     const auto total_workers = num_output_fm_items;
 
@@ -1572,7 +1726,8 @@ void convolution_f32::backward_bias_delta(
     else
     {
         // Full cores utilization version.
-        std::vector<nn::workload_data<float> *> backprop_bias_delta_views(total_workers);
+        std::vector<nn::workload_data<> *> backprop_bias_delta_views(total_workers);
+        std::vector<nn::workload_data<> *> backprop_input_delta_views(total_workers);
 
         // Fill slave work items.
         for (auto output_fm_item = 0u; output_fm_item < num_output_fm_items; ++output_fm_item)
@@ -1597,8 +1752,28 @@ void convolution_f32::backward_bias_delta(
                 backward_bias_delta_view->get_length(NN_DATA_COORD_q) - 1
             );
 
+            nn_workload_data_coords_t input_view_begin(
+                0,
+                0,
+                0,
+                output_fm_item * convolution_f32_impl::C_slice_size,
+                0,
+                0
+            );
+
+            nn_workload_data_coords_t input_view_end(
+                backward_input_view->get_length(NN_DATA_COORD_n) - 1,
+                backward_input_view->get_length(NN_DATA_COORD_x) - 1,
+                backward_input_view->get_length(NN_DATA_COORD_y) - 1,
+                (output_fm_item+1) * convolution_f32_impl::C_slice_size - 1,
+                backward_input_view->get_length(NN_DATA_COORD_p) - 1,
+                backward_input_view->get_length(NN_DATA_COORD_q) - 1
+            );
+
             backprop_bias_delta_views[item_in_pool] =
-                new nn::workload_data<float>(*backward_bias_delta_view, bias_view_begin, bias_view_end);
+                new nn::workload_data<>(*backward_bias_delta_view, bias_view_begin, bias_view_end);
+            backprop_input_delta_views[item_in_pool] =
+                new nn::workload_data<>(*backward_input_view, input_view_begin, input_view_end);
         }
 
         // Run threads.
@@ -1608,7 +1783,7 @@ void convolution_f32::backward_bias_delta(
         for (auto item_in_pool = 0u; item_in_pool < total_workers; ++item_in_pool)
         {
             request_handles[item_in_pool] = std::make_tuple(
-                                                            backward_input_view,
+                                                            backprop_input_delta_views[item_in_pool],
                                                             backprop_bias_delta_views[item_in_pool]);
 
             job[item_in_pool].callback = convolution_f32_impl::unpack_convolve_callback_handle_backward_bias;
@@ -1621,15 +1796,16 @@ void convolution_f32::backward_bias_delta(
         // Cleanup dynamic memory.
         for (auto item_in_pool = 0u; item_in_pool < total_workers; ++item_in_pool)
         {
+            delete backprop_input_delta_views[item_in_pool];
             delete backprop_bias_delta_views[item_in_pool];
         }
     }
 }
 
 void convolution_f32::backward_weights_delta(
-                               const nn::workload_data<float> *forward_input_view,
-                               const nn::workload_data<float> *backward_input_view,
-                               nn::workload_data<float> *backward_weights_delta_view)
+                               const nn::workload_data<> *forward_input_view,
+                               const nn::workload_data<> *backward_input_view,
+                               nn::workload_data<> *backward_weights_delta_view)
 {
     const auto num_output_fm_items =
         (backward_input_view->view_end.t[NN_DATA_COORD_z] - backward_input_view->view_begin.t[NN_DATA_COORD_z] + 1) / convolution_f32_impl::C_slice_size;
@@ -1663,16 +1839,18 @@ void convolution_f32::backward_weights_delta(
             forward_input_view,
             backward_input_view,
             backward_weights_delta_view,
-            stride_x,
-            stride_y,
-            center_offset_x,
-            center_offset_y,
-            num_accumulators);
+            static_cast<uint32_t>(stride_x),
+            static_cast<uint32_t>(stride_y),
+            static_cast<uint32_t>(center_offset_x),
+            static_cast<uint32_t>(center_offset_y),
+            static_cast<uint32_t>(num_accumulators));
     }
     else
     {
         // Full cores utilization version.
-        std::vector<nn::workload_data<float> *> backprop_weight_delta_views(total_workers);
+        std::vector<nn::workload_data<> *> backprop_weight_delta_views(total_workers);
+        std::vector<nn::workload_data<> *> backprop_input_delta_views(total_workers);
+        std::vector<nn::workload_data<> *> forward_input_views(total_workers);
 
         // Fill slave work items.
         for (auto output_fm_item = 0u; output_fm_item < num_output_fm_items; ++output_fm_item)
@@ -1700,8 +1878,48 @@ void convolution_f32::backward_weights_delta(
                     output_fm_item,
                 };
 
+                nn_workload_data_coords_t input_view_begin(
+                    0,
+                    0,
+                    0,
+                    output_fm_item * convolution_f32_impl::C_slice_size,
+                    0,
+                    0
+                );
+
+                nn_workload_data_coords_t input_view_end(
+                    backward_input_view->get_length(NN_DATA_COORD_n) - 1,
+                    backward_input_view->get_length(NN_DATA_COORD_x) - 1,
+                    backward_input_view->get_length(NN_DATA_COORD_y) - 1,
+                    (output_fm_item+1) * convolution_f32_impl::C_slice_size - 1,
+                    backward_input_view->get_length(NN_DATA_COORD_p) - 1,
+                    backward_input_view->get_length(NN_DATA_COORD_q) - 1
+                );
+
+                nn_workload_data_coords_t forward_input_view_begin(
+                    0,
+                    0,
+                    0,
+                    input_fm_item * num_accumulators,
+                    0,
+                    0
+                );
+
+                nn_workload_data_coords_t forward_input_view_end(
+                    forward_input_view->get_length(NN_DATA_COORD_n) - 1,
+                    forward_input_view->get_length(NN_DATA_COORD_x) - 1,
+                    forward_input_view->get_length(NN_DATA_COORD_y) - 1,
+                    (input_fm_item+1)*num_accumulators-1,
+                    forward_input_view->get_length(NN_DATA_COORD_p) - 1,
+                    forward_input_view->get_length(NN_DATA_COORD_q) - 1
+                );
+
                 backprop_weight_delta_views[item_in_pool] =
-                    new nn::workload_data<float>(*backward_weights_delta_view, weights_view_begin, weights_view_end);
+                    new nn::workload_data<>(*backward_weights_delta_view, weights_view_begin, weights_view_end);
+                backprop_input_delta_views[item_in_pool] =
+                    new nn::workload_data<>(*backward_input_view, input_view_begin, input_view_end);
+                forward_input_views[item_in_pool] =
+                    new nn::workload_data<>(*forward_input_view, forward_input_view_begin, forward_input_view_end);
             }
         }
 
@@ -1712,8 +1930,8 @@ void convolution_f32::backward_weights_delta(
         for (auto item_in_pool = 0u; item_in_pool < total_workers; ++item_in_pool)
         {
             request_handles[item_in_pool] = std::make_tuple(
-                                                            forward_input_view,
-                                                            backward_input_view,
+                                                            forward_input_views[item_in_pool],
+                                                            backprop_input_delta_views[item_in_pool],
                                                             backprop_weight_delta_views[item_in_pool],
                                                             stride_x,
                                                             stride_y,
@@ -1731,6 +1949,8 @@ void convolution_f32::backward_weights_delta(
         // Cleanup dynamic memory.
         for (auto item_in_pool = 0u; item_in_pool < total_workers; ++item_in_pool)
         {
+            delete forward_input_views[item_in_pool];
+            delete backprop_input_delta_views[item_in_pool];
             delete backprop_weight_delta_views[item_in_pool];
         }
     }
@@ -1744,13 +1964,16 @@ void convolution_f32::backward(const std::vector<nn_workload_data_t *> &inputs,
     assert(parameters.size() >= 1);
     assert(outputs.size() == 1);
 
-    const nn::workload_data<float> backward_input(outputs[0]->parent->delta_buffer, outputs[0]->parent->lengths, outputs[0]->parent->layout);
-    nn::workload_data<float> backward_output(inputs[0]->parent->delta_buffer, inputs[0]->parent->lengths, inputs[0]->parent->layout);
+    nn::workload_data<> backward_input(outputs[0]->parent->delta_buffer, outputs[0]->parent->lengths, outputs[0]->parent->layout);
+    nn::workload_data<> backward_output(inputs[0]->parent->delta_buffer, inputs[0]->parent->lengths, inputs[0]->parent->layout);
 
     backward_output.view_begin = inputs[0]->view_begin;
     backward_output.view_end= inputs[0]->view_end;
 
-    backward_input_delta(reinterpret_cast<const nn::workload_data<float> *>(parameters[0]),
+    backward_input.view_begin = outputs[0]->view_begin;
+    backward_input.view_end   = outputs[0]->view_end;
+
+    backward_input_delta(reinterpret_cast<const nn::workload_data<> *>(parameters[0]),
                          &backward_input,
                          &backward_output);
 }
@@ -1767,17 +1990,24 @@ void convolution_f32::backward_parameter(size_t parameter_index,
     {
         case 0:
             {
-            const nn::workload_data<float> backward_input(outputs[0]->parent->delta_buffer, outputs[0]->parent->lengths, outputs[0]->parent->layout);
-            nn::workload_data<float> backward_weights(parameters[0]->parent->delta_buffer, parameters[0]->parent->lengths, parameters[0]->parent->layout);
-            backward_weights_delta(reinterpret_cast<const nn::workload_data<float> *>(inputs[0]),
+            nn::workload_data<> backward_input(outputs[0]->parent->delta_buffer, outputs[0]->parent->lengths, outputs[0]->parent->layout);
+            // get rid of view on xy, but keep view on z
+            backward_input.view_begin.t[3] = outputs[0]->view_begin.t[3];
+            backward_input.view_end.t[3] = outputs[0]->view_end.t[3];
+            nn::workload_data<> backward_weights(parameters[0]->parent->delta_buffer, parameters[0]->parent->lengths, parameters[0]->parent->layout);
+            backward_weights_delta(reinterpret_cast<const nn::workload_data<> *>(inputs[0]),
                                    &backward_input,
                                    &backward_weights);
             break;
             }
         case 1:
             {
-            const nn::workload_data<float> backward_input(outputs[0]->parent->delta_buffer, outputs[0]->parent->lengths, outputs[0]->parent->layout);
-            nn::workload_data<float> backward_bias(parameters[1]->parent->delta_buffer, parameters[1]->parent->lengths, parameters[1]->parent->layout);
+            nn::workload_data<> backward_input(outputs[0]->parent->delta_buffer, outputs[0]->parent->lengths, outputs[0]->parent->layout);
+            // get rid of view on xy, but keep view on z
+            backward_input.view_begin.t[3] = outputs[0]->view_begin.t[3];
+            backward_input.view_end.t[3] = outputs[0]->view_end.t[3];
+ 
+            nn::workload_data<> backward_bias(parameters[1]->parent->delta_buffer, parameters[1]->parent->lengths, parameters[1]->parent->layout);
             backward_bias_delta(&backward_input, &backward_bias);
             break;
             }
@@ -1786,13 +2016,14 @@ void convolution_f32::backward_parameter(size_t parameter_index,
     }
 }
 
-void convolution_f32::backward(const nn::workload_data<float> *forward_input_view,
-                               const nn::workload_data<float> *forward_weights_view,
-                               const nn::workload_data<float> *forward_output_view,
-                               const nn::workload_data<float> *backward_input_view,
-                               nn::workload_data<float> *backward_output_view,
-                               nn::workload_data<float> *backward_weights_delta_view,
-                               nn::workload_data<float> *backward_bias_delta_view)
+void convolution_f32::backward(const nn::workload_data<> *forward_input_view,
+                               const nn::workload_data<> *forward_weights_view,
+                               const nn::workload_data<> *forward_output_view,
+                               const nn::workload_data<> *backward_input_view,
+                               nn::workload_data<> *backward_output_view,
+                               nn::workload_data<> *backward_weights_delta_view,
+                               nn::workload_data<> *backward_bias_delta_view,
+                               bool)
 {
     backward_input_delta(forward_weights_view,
                          backward_input_view,
@@ -1811,13 +2042,14 @@ void run_multithreaded_convolve_work_item_backward(nn_workload_item *const work_
     auto primitive = static_cast<convolution_f32 *>(work_item->forward_item->primitive);
 
     primitive->backward(
-        reinterpret_cast<nn::workload_data<float> *>(work_item->forward_item->input[0].get_data_view()),
-        reinterpret_cast<const nn::workload_data<float> *>(work_item->forward_item->parameters[0]),
-        reinterpret_cast<nn::workload_data<float> *>(work_item->forward_item->output[0]),
-        reinterpret_cast<nn::workload_data<float> *>(work_item->input[0].get_data_view()),
-        reinterpret_cast<nn::workload_data<float> *>(work_item->output[0]),
-        reinterpret_cast<nn::workload_data<float> *>(work_item->output[1]),  
-        reinterpret_cast<nn::workload_data<float> *>(work_item->output[2])); 
+        nn::workload_data_cast<>(work_item->forward_item->input[0].get_data_view()),
+        reinterpret_cast<const nn::workload_data<> *>(work_item->forward_item->parameters[0]),
+        nn::workload_data_cast<>(work_item->forward_item->output[0]),
+        nn::workload_data_cast<>(work_item->input[0].get_data_view()),
+        nn::workload_data_cast<>(work_item->output[0]),
+        nn::workload_data_cast<>(work_item->output[1]),
+        nn::workload_data_cast<>(work_item->output[2]),
+        true);
 }
 
 convolution_f32::convolution_f32(const size_t kernel_w,
@@ -1858,17 +2090,18 @@ convolution_f32::convolution_f32(const size_t kernel_w,
 
 bool convolution_f32::validate_input(size_t index, nn_workload_data_t *data)
 {
+    throw std::logic_error("unimplemented");
     switch (index) {
     case 0:
-        return nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, float>::validate<true>(data,
-                                                                                 get_required_input_w() - kernel_w + 1,
-                                                                                 get_required_input_h() - kernel_h + 1,
-                                                                                 input_size_z,
-                                                                                 batch_size,
-                                                                                 center_offset_x,
-                                                                                 center_offset_y,
-                                                                                 kernel_w - center_offset_x - 1,
-                                                                                 kernel_h - center_offset_y - 1);
+        return nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::validate<true>(data,
+                                                                                 static_cast<uint32_t>(get_required_input_w() - kernel_w + 1),
+                                                                                 static_cast<uint32_t>(get_required_input_h() - kernel_h + 1),
+                                                                                 static_cast<uint32_t>(input_size_z),
+                                                                                 static_cast<uint32_t>(batch_size),
+                                                                                 static_cast<uint32_t>(center_offset_x),
+                                                                                 static_cast<uint32_t>(center_offset_y),
+                                                                                 static_cast<uint32_t>(kernel_w - center_offset_x - 1),
+                                                                                 static_cast<uint32_t>(kernel_h - center_offset_y - 1));
     }
 
     throw std::invalid_argument("index out of range");
@@ -1879,15 +2112,15 @@ size_t convolution_f32::get_required_input_w() { return (output_size_x - 1) * st
 size_t convolution_f32::get_required_input_h() { return (output_size_y - 1) * stride_y + kernel_h; }
 
 std::vector<nn_workload_data_t *> convolution_f32::create_inputs(bool allocate_delta) {
-    return {nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, float>::create(device,
-                                                                      get_required_input_w() - kernel_w + 1,
-                                                                      get_required_input_h() - kernel_h + 1,
-                                                                      input_size_z,
-                                                                      batch_size,
-                                                                      center_offset_x,
-                                                                      kernel_w - center_offset_x - 1,
-                                                                      center_offset_y,
-                                                                      kernel_h - center_offset_y - 1,
+    return {nn::data_helper<NN_WORKLOAD_DATA_TAG_ZXYN, nn::layout_zxyn_f32>::create(device,
+                                                                      static_cast<uint32_t>(get_required_input_w() - kernel_w + 1),
+                                                                      static_cast<uint32_t>(get_required_input_h() - kernel_h + 1),
+                                                                      static_cast<uint32_t>(input_size_z),
+                                                                      static_cast<uint32_t>(batch_size),
+                                                                      static_cast<uint32_t>(center_offset_x),
+                                                                      static_cast<uint32_t>(kernel_w - center_offset_x - 1),
+                                                                      static_cast<uint32_t>(center_offset_y),
+                                                                      static_cast<uint32_t>(kernel_h - center_offset_y - 1),
                                                                       allocate_delta)};
 }
 
@@ -1896,9 +2129,15 @@ std::vector<nn_workload_data_t *> convolution_f32::create_parameters(bool alloca
     const uint32_t C_simd_width = sizeof(__m256) / sizeof(float);
     const uint32_t C_slice_size = 2 * C_simd_width;
 
-    return {nn::data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIXYO, float>::create(
-                device, C_slice_size, kernel_w, kernel_h, input_size_z, output_size_z, allocate_delta),
-            nn::data_helper<NN_WORKLOAD_DATA_TAG_O, float>::create(device, output_size_z, allocate_delta)};
+    return {nn::data_helper<NN_WORKLOAD_DATA_TAG_OBLOCKIXYO, nn::layout_oblockixyo_f32>::create(
+                                                                            device,
+                                                                            static_cast<uint32_t>(C_slice_size),
+                                                                            static_cast<uint32_t>(kernel_w),
+                                                                            static_cast<uint32_t>(kernel_h),
+                                                                            static_cast<uint32_t>(input_size_z),
+                                                                            static_cast<uint32_t>(output_size_z),
+                                                                            allocate_delta),
+            nn::data_helper<NN_WORKLOAD_DATA_TAG_O, nn::layout_o_f32>::create(device, static_cast<uint32_t>(output_size_z), allocate_delta)};
 }
 
 } // namespace layer
@@ -1918,21 +2157,21 @@ nn_primitive_handle_t NN_API_CALL_CONVENTION nn_primitives_convolution_f32_creat
     const nn_argument_activation_t *activation, /* struct parameterizing optional activation function */
     size_t batch_size,                          /* size of input batch */
     const nn_primitives_convolution_hints_t *hints,
-    NN_API_STATUS *status /* NN_API_STATUS_OK on success */) {
+    NN_API_STATUS *status /* NN_API_STATUS_OK on success */)
+{
     SET_STATUS(NN_API_STATUS_OK);
 
     std::remove_const<std::remove_pointer<decltype(hints)>::type>::type hints_ = {};
     if (hints != nullptr)
         hints_ = *hints;
-
     return new layer::convolution_f32(kernel_w,
                                       kernel_h,
                                       num_input,
                                       num_output,
                                       output_w,
                                       output_h,
-                                      center_offset_x,
-                                      center_offset_y,
+                                      static_cast<int32_t>(center_offset_x),
+                                      static_cast<int32_t>(center_offset_y),
                                       stride_x,
                                       stride_y,
                                       *activation,
@@ -1943,3 +2182,46 @@ nn_primitive_handle_t NN_API_CALL_CONVENTION nn_primitives_convolution_f32_creat
                                       hints_.output_padding.bottom,
                                       reinterpret_cast<nn_device_internal *>(device));
 }
+
+//for future interface extension
+nn_primitive_handle_t NN_API_CALL_CONVENTION nn_primitives_convolution_f32_create_NBLOCKZXYN(
+    nn_device_t *device,    /* IDLF device handle */
+    size_t kernel_w,        /* kernel width */
+    size_t kernel_h,        /* kernel height */
+    size_t num_input,       /* number of input feature maps */
+    size_t num_output,      /* number of output feature maps */
+    size_t output_w,        /* output width */
+    size_t output_h,        /* output height */
+    size_t center_offset_x, /* horizontal offset of kernel's center point w/ relation to top left corner */
+    size_t center_offset_y, /* vertical offset of kernel's center point w/ relation to top left corner */
+    size_t stride_x,        /* horizontal stride */
+    size_t stride_y,        /* vertical stride */
+    const nn_argument_activation_t *activation, /* struct parameterizing optional activation function */
+    size_t batch_size,                          /* size of input batch */
+    const nn_primitives_convolution_hints_t *hints,
+    NN_API_STATUS *status /* NN_API_STATUS_OK on success */)
+{
+    SET_STATUS(NN_API_STATUS_OK);
+
+    std::remove_const<std::remove_pointer<decltype(hints)>::type>::type hints_ = {};
+    if (hints != nullptr)
+        hints_ = *hints;
+
+    if (batch_size % layer::BATCH_ACCEPTED_BLOCK == 0)
+    {
+        using namespace convolution;
+        using namespace convolution::forward;
+
+        return new layer::convolution_f32_batch24n(
+            make<Batch>(batch_size),
+            OutputDimensions{make<OutputHeight>(output_h), make<OutputWidth>(output_w), make<OutputFeats>(num_output)},
+            KernelInfo{KernelDimensions{make<KernelHeight>(kernel_h), make<KernelWidth>(kernel_w), make<KernelFeats>(num_input)},
+                       make<OutputFeats>(num_output),
+                       KernelCenter{make<Rows>(center_offset_y), make<Cols>(center_offset_x)},
+                       Stride{make<Rows>(stride_y), make<Cols>(stride_x)}},
+            *activation,
+            static_cast<nn_device_internal*>(device));
+    }
+    return nullptr;
+}
+

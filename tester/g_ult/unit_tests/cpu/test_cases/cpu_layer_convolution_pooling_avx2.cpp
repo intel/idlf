@@ -27,6 +27,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "tester/g_ult/unit_tests/cpu/naive_implementations.h"
 #include "device/cpu/core/layer_convolution_pooling_avx2.h"
+#include <cfloat>
+#include <gtest/gtest.h>
 
 const uint32_t C_simd_width = sizeof(__m256)/sizeof(float);
 const uint32_t C_slice_size = 2 * C_simd_width;
@@ -60,8 +62,8 @@ void ult_nn_convolution_initialize_work_item(
     NN_ACTIVATION_FUNCTION activation,
     nn_device_t *device)
 {
-    nn_workload_data_layout_t inp_out_layout = nn::workload_data<float>::layout.zxynpq;
-    nn_workload_data_layout_t weight_layout = nn::workload_data<float>::layout.pzxyqn;
+    nn_workload_data_layout_t inp_out_layout = nn::layout_t<nn::layout_zxynpq_f32>::layout;
+    nn_workload_data_layout_t weight_layout = nn::layout_t<nn::layout_pzxyqn_f32>::layout;
 
     nn_workload_data_coords_t input_coords = 
     { 
@@ -103,9 +105,9 @@ void ult_nn_convolution_initialize_work_item(
         num_output_feature_maps / C_slice_size
     };
 
-    nn::workload_data<float> *output_data = new nn::workload_data<float>(output_coords, inp_out_layout);
-    nn::workload_data<float> *bias_data = new nn::workload_data<float>(bias_coords, inp_out_layout);
-    nn::workload_data<float> *weight_data = new nn::workload_data<float>(weight_coords, weight_layout);
+    nn::workload_data<> *output_data = new nn::workload_data<>(output_coords, inp_out_layout);
+    nn::workload_data<> *bias_data = new nn::workload_data<>(bias_coords, inp_out_layout);
+    nn::workload_data<> *weight_data = new nn::workload_data<>(weight_coords, weight_layout);
 
     uint32_t center_offset_x = (kernel_width - 1) / 2, center_offset_y = (kernel_height - 1) / 2;
     nn_argument_activation_t s_activation;
@@ -144,8 +146,9 @@ void ult_nn_convolution_initialize_work_item(
 
     input_item = new nn_workload_item();
     input_item->type = NN_WORK_ITEM_TYPE_INPUT;
+    input_item->primitive = nullptr;
 
-    nn::workload_data<float> *input_data = new nn::workload_data<float>(input_coords, inp_out_layout);
+    nn::workload_data<> *input_data = new nn::workload_data<>(input_coords, inp_out_layout);
 
     nn_workload_data_coords_t input_view_begin =
     {
@@ -165,7 +168,7 @@ void ult_nn_convolution_initialize_work_item(
         input_data->get_length(NN_DATA_COORD_q) - 1
     };
 
-    nn::workload_data<float> *view_input_data = new nn::workload_data<float>(*input_data, input_view_begin, input_view_end);
+    nn::workload_data<> *view_input_data = new nn::workload_data<>(*input_data, input_view_begin, input_view_end);
     delete input_data;
 
     memcpy(view_input_data->parent->data_buffer, input, view_input_data->parent->buffer_size);
@@ -180,15 +183,26 @@ void ult_nn_convolution_deinitialize_work_item(nn_workload_item* &work_item)
     if (work_item->type == NN_WORK_ITEM_TYPE_CONVOLUTION)
     {
         auto &arguments = work_item->arguments.forward_convolution_pooling_max_2x2_stride_2x2;
-        delete reinterpret_cast<nn::workload_data<float>*>(arguments.biases);
-        delete reinterpret_cast<nn::workload_data<float>*>(arguments.weights);
+        delete nn::workload_data_cast<>(arguments.biases);
+        delete nn::workload_data_cast<>(arguments.weights);
     }
 
-    work_item->input.clear();
-    delete reinterpret_cast<nn::workload_data<float>*>(work_item->output[0]);
+    for(auto& parameter : work_item->parameters)
+    {
+        delete parameter;
+        parameter = nullptr;
+    }
+
+    for(auto& output : work_item->output)
+    {
+        delete output;
+        output = nullptr;
+    }
+
+    delete work_item->primitive;
+    work_item->primitive = nullptr;
 
     delete work_item;
-
     work_item = nullptr;
 }
 
@@ -699,6 +713,7 @@ bool ult_perform_test(
 
     // Cleanup.
     ult_nn_convolution_deinitialize_work_item(work_item);
+    ult_nn_convolution_deinitialize_work_item(input_item);
 
     ult_nn_convolution_both_dealloc(
         input,
@@ -825,3 +840,4 @@ TEST(cpu_convolution_maxpooling2x2_artificial, cpu_convolution_maxpooling2x2_str
 //                                EXPECT_EQ(true, ult_perform_padding_test(batch, num_ofm, num_ifm, fm_size, fm_size, kernel_width, kernel_height, 4, 3, activation));
 //                    }
 //}
+

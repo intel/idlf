@@ -28,6 +28,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "workflow_builder.h"
 #include "common/nn_data_tools.h"
 
+static NN_WORKLOAD_DATA_TYPE in_formats[] =
+        { NN_WORKLOAD_DATA_TYPE_F32_2D_BATCH };
+
+static NN_WORKLOAD_DATA_TYPE out_formats[] =
+        { NN_WORKLOAD_DATA_TYPE_F32_1D_BATCH };
+
+
 class workflow_builder_lenet_float: public workflow_builder_base
 {
 
@@ -38,6 +45,10 @@ public:
     }
 
     bool is_valid() { return error_.empty(); }
+
+    virtual NN_WORKLOAD_DATA_TYPE* get_input_formats() {return in_formats;}
+    virtual NN_WORKLOAD_DATA_TYPE* get_output_formats() {return out_formats;}
+
 private:
     std::string error_;
 
@@ -156,7 +167,7 @@ public:
 
             wrkflwi_input->type = NN_WORK_ITEM_TYPE_INPUT;
             wrkflwi_input->arguments.input.index = 0;
-            wrkflwi_input->output_format[0].format = NN_DATA_FORMAT_2D;     
+            wrkflwi_input->output_format[0].format = NN_DATA_FORMAT_2D;
             wrkflwi_input->output_format[0].format_3d ={ { img_size, img_size} };
         }
 
@@ -189,7 +200,7 @@ public:
             // It should be 20 output FM , but we do support only case when output FM number is divisble by 8
             wrkflwi_stage_1_conv->output_format[0].format_3d ={ { 24, 24, 24 } };
         }
-        
+
         {
             nn_workflow_use_descriptor_t inputs_descriptor = { wrkflwi_stage_1_conv, 0 };
             di->workflow_item_create_function(&wrkflwi_stage_1_pool, 1, &inputs_descriptor, 1);
@@ -209,7 +220,7 @@ public:
         // view
         {
             nn_workflow_use_descriptor_t inputs_descriptor = { wrkflwi_stage_1_pool, 0 };
-            di->workflow_item_create_function(&wrkflwi_stage_1_subv, 1, &inputs_descriptor, 1); // view 
+            di->workflow_item_create_function(&wrkflwi_stage_1_subv, 1, &inputs_descriptor, 1); // view
 
             wrkflwi_stage_1_subv->type = NN_WORK_ITEM_TYPE_VIEW;
             wrkflwi_stage_1_subv->arguments.view.origin[0] = 0;
@@ -226,7 +237,7 @@ public:
         //         maxpool: 2x2 stride 2x2;
         //          output: 4x4x50
 
-        // convolution 2 
+        // convolution 2
         {
             nn_workflow_use_descriptor_t inputs_descriptor = { wrkflwi_stage_1_subv, 0 };
             di->workflow_item_create_function(&wrkflwi_stage_2_conv, 1, &inputs_descriptor, 1);
@@ -286,15 +297,17 @@ public:
 
 
             // Generated weights if taken from caffe , are in 2D format while we need them in 4d format
-            nn::data<float>* nnwrkld_fc1_converted_weights = nn_data_convert_weights_2D_to_4D(nnwrkld_fc1_weights, 
-                                                                                              4, 
+            nn::data<float>* nnwrkld_fc1_converted_weights = nn_data_convert_weights_2D_to_4D(nnwrkld_fc1_weights,
+                                                                                              4,
                                                                                               4,
                                                                                               50,
-                                                                                              nnwrkld_fc1_weights->size[1]);
+                                                                                              static_cast<uint32_t>(nnwrkld_fc1_weights->size[1]));
             // release original weights
             delete nnwrkld_fc1_weights;
             // Extend weights' depth of FC layer to match extended weights input
-            nnwrkld_fc1_weights = nn_data_extend_weights_by_padding(nnwrkld_fc1_converted_weights,56,nnwrkld_fc1_converted_weights->size[3]);
+            nnwrkld_fc1_weights = nn_data_extend_weights_by_padding(nnwrkld_fc1_converted_weights,
+                                                                    56,
+                                                                    static_cast<uint32_t>(nnwrkld_fc1_converted_weights->size[3]));
             delete nnwrkld_fc1_converted_weights;
             nnwrkld_fc1_converted_weights = nullptr;
 
@@ -304,7 +317,7 @@ public:
             wrkflwi_stage_3_fc->output_format[0].format = NN_DATA_FORMAT_1D;
             wrkflwi_stage_3_fc->output_format[0].format_1d ={ { 500 } };
         }
- 
+
         // ------------------------------------------------------------------------------------------
         // STAGE 04
         //            full: ;

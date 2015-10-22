@@ -34,6 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sstream>
 #include <iomanip>
 #include <vector>
+
 #if defined __GNUC__ && (__GNUC__*10000+__GNUC_MINOR__*100+__GNUC_PATCHLEVEL__)<40900
 // GCC prior 4.9 has an invalid regex support in std::
 // adding simple stub that emulates minimal functionality using POSIX <regex.h>

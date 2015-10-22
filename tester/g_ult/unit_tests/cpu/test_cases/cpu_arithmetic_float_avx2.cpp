@@ -74,15 +74,15 @@ namespace {
         if(is_ref) {
             // Naive implementation.
             auto *input = &(work_item->input[0]);
-            auto output = static_cast<nn::workload_data<float>*>(work_item->output[0]);
+            auto output = static_cast<nn::workload_data<nn::layout_f32>*>(work_item->output[0]);
 
             auto batchsize = output->parent->lengths.t[NN_DATA_COORD_n];
             auto size_x = output->parent->lengths.t[NN_DATA_COORD_x];
             auto size_y = output->parent->lengths.t[NN_DATA_COORD_y];
             auto size_z = output->parent->lengths.t[NN_DATA_COORD_z];
 
-            auto factor = reinterpret_cast<nn::workload_data<float> *>(work_item->parameters[0]);
-            output = static_cast<nn::workload_data<float>*>(work_item->output[0]);
+            auto factor = nn::workload_data_cast<nn::layout_f32>(work_item->parameters[0]);
+            output = static_cast<nn::workload_data<nn::layout_f32>*>(work_item->output[0]);
 
          // check sizes  (x,y,z of factor must be equal to x,y,z of input)
            if(size_x != factor->get_length( 1 ) || size_y != factor->get_length( 2 ) || size_z != factor->get_length( 3 ))  
@@ -133,13 +133,21 @@ namespace {
     }
 
     void destroy_work_item(
-        nn_workload_item* &work_item ) {
-        work_item->input.clear();
+        nn_workload_item* &work_item ) 
+    {
+        for(auto& parameter : work_item->parameters)
+        {
+            delete parameter;
+            parameter = nullptr;
+        }
 
-        delete reinterpret_cast<nn::workload_data<float>*>(work_item->output[0]);
+        for(auto& output : work_item->output)
+        {
+            delete output;
+            output = nullptr;
+        }
 
         delete work_item;
-
         work_item = nullptr;
     }
 
@@ -160,11 +168,12 @@ namespace {
 
         work_item = new nn_workload_item();
         work_item->type = NN_WORK_ITEM_TYPE_INPUT;
+        work_item->primitive = nullptr;
         work_item->arguments.input.index = 0;
 
-        nn_workload_data_layout_t inp_out_layout = nn::workload_data<float>::layout.zxynpq;
+        nn_workload_data_layout_t inp_out_layout = nn::layout_t<nn::layout_zxynpq_f32>::layout;
 
-        work_item->output.push_back(new nn::workload_data<float>( in_out_coords, inp_out_layout ));
+        work_item->output.push_back(new nn::workload_data<>( in_out_coords, inp_out_layout ));
 
         for(uint32_t batch = 0; batch < batch_size; ++batch) {
             for(uint32_t input_element = 0; input_element < input_width; ++input_element) {
@@ -201,11 +210,11 @@ namespace {
         work_item->primitive = new layer::arithmetic_f32(
             input_width, input_width, z, function, batch_size, reinterpret_cast<nn_device_internal *>(device));
 
-        nn_workload_data_layout_t inp_out_layout = nn::workload_data<float>::layout.zxynpq;
+        nn_workload_data_layout_t inp_out_layout = nn::layout_t<nn::layout_zxynpq_f32>::layout;
       
         work_item->input.push_back( {input_item, 0} );
   
-        work_item->output.emplace_back(new nn::workload_data<float>( in_out_coords, inp_out_layout ));
+        work_item->output.emplace_back(new nn::workload_data<>( in_out_coords, inp_out_layout ));
 
         for(uint32_t batch = 0; batch < batch_size; ++batch)
             for(uint32_t size_x = 0; size_x < input_width; ++size_x) 
@@ -213,7 +222,7 @@ namespace {
                     for(uint32_t size_z = 0; size_z < z; ++size_z)
                         nn_workload_data_get<float>( work_item->output[0], batch, size_x, size_y, size_z, 0, 0 ) = 0.0f;
 
-        auto factor = new nn::workload_data<float>(in_out_coords, inp_out_layout);
+        auto factor = new nn::workload_data<nn::layout_f32>(in_out_coords, inp_out_layout);
         work_item->parameters.push_back(factor);
 
         for(uint32_t batch = 0; batch < batch_size; ++batch)
@@ -227,8 +236,8 @@ namespace {
         uint32_t input_width,
         uint32_t batch_size,
         uint32_t z_size,
-        NN_ARITHMETIC_FUNCTION function ) {
-
+        NN_ARITHMETIC_FUNCTION function) 
+    {
         bool return_value = true;
 
         nn_device_description_t device_description;

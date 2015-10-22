@@ -34,6 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "device/common/nn_workload_data.h"
 #include "device/cpu/core/layer_dropout.h"
 #include "device/cpu/api_internal/nn_device_interface_0_internal.h"
+#include "device/api/nn_primitives_api_0.h"
 
 
 namespace
@@ -146,7 +147,7 @@ namespace
         nn_workflow_item_t *dropout_backprop = nullptr;
         {
             nn_workflow_use_descriptor_t desc0[] = {{ loss_function, 0 }, { seed_input, 0 }, { if_train_input, 0 }};
-            EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_create_function(&dropout_backprop, 3, desc0, 3));
+            EXPECT_EQ(NN_API_STATUS_OK, di.workflow_item_create_function(&dropout_backprop, 3, desc0, 1));
             dropout_backprop->type = NN_WORK_ITEM_TYPE_DROPOUT_BACKPROP;
 
             dropout_backprop->forward_item = dropout;
@@ -179,11 +180,20 @@ namespace
     nn_workload_item_t* get_backprop(
         nn_workload_t* workload)
     {
-        nn_workload_opaque_t* workload_opaque = reinterpret_cast<nn_workload_opaque_t*>(workload + 1);
+        nn_workload_opaque_t* workload_opaque = static_cast<nn_workload_opaque_t*>(workload);
         nn_workload_item_t *workload_backprop = workload_opaque->order_of_execution.back();
         assert(workload_backprop->type == NN_WORK_ITEM_TYPE_DROPOUT_BACKPROP);
 
         return workload_backprop;
+    }
+
+    float get_multiplier(
+        std::mt19937& gen,
+        uint32_t threshold,
+        float scale)
+    {
+        uint32_t intermediate = (~static_cast<uint32_t>((static_cast<int64_t>(gen()) - threshold) >> 32)) & *reinterpret_cast<uint32_t*>(&scale);
+        return *reinterpret_cast<float*>(&intermediate);
     }
 
     void naive(float drop_rate,
@@ -199,21 +209,17 @@ namespace
         auto is_training = nn_workload_data_get<int32_t>(input_if_train, 0, 0, 0, 0, 0, 0) != 0;  
 
         std::mt19937 gen(seed);
-        std::bernoulli_distribution dis(drop_rate);
+        auto threshold = static_cast<uint32_t>(static_cast<double>(drop_rate)*std::numeric_limits<unsigned int>::max());
         float scale = 1.0f / (1.0f - drop_rate);
 
-        for (uint32_t n = 0; n < output->parent->lengths.t[NN_DATA_COORD_n]; ++n)
-            for (uint32_t x = 0; x < output->parent->lengths.t[NN_DATA_COORD_x]; ++x)
-                for (uint32_t y = 0; y < output->parent->lengths.t[NN_DATA_COORD_y]; ++y)
-                    for (uint32_t z = 0; z < output->parent->lengths.t[NN_DATA_COORD_z]; ++z)
-                        for (uint32_t p = 0; p < output->parent->lengths.t[NN_DATA_COORD_p]; ++p)
-                            for (uint32_t q = 0; q < output->parent->lengths.t[NN_DATA_COORD_q]; ++q)
-                            {
-                                if (is_training)
-                                    nn_workload_data_get<float>(output, n, x, y, z, p, q) = dis(gen) ? 0.0f : nn_workload_data_get<float>(input_data, n, x, y, z, p, q) * scale;
-                                else
-                                    nn_workload_data_get<float>(output, n, x, y, z, p, q) = nn_workload_data_get<float>(input_data, n, x, y, z, p, q);
-                            }
+        for (uint32_t x = 0; x < output->parent->lengths.t[NN_DATA_COORD_x]; ++x)
+            for (uint32_t n = 0; n < output->parent->lengths.t[NN_DATA_COORD_n]; ++n)   
+            {
+                if (is_training)
+                    nn_workload_data_get<float>(output, n, x, 0, 0, 0, 0) = nn_workload_data_get<float>(input_data, n, x, 0, 0, 0, 0) * get_multiplier(gen, threshold, scale);
+                else
+                    nn_workload_data_get<float>(output, n, x, 0, 0, 0, 0) = nn_workload_data_get<float>(input_data, n, x, 0, 0, 0, 0);
+            }
                               
     }
 
@@ -221,8 +227,8 @@ namespace
         nn_workload_data_t* data_item,
         nn_workload_data_t* data_item_ref)
     {
-        nn::workload_data<float> data(data_item->parent->data_buffer, data_item->parent->lengths, data_item->parent->layout);
-        nn::workload_data<float> reference(data_item_ref->parent->data_buffer, data_item_ref->parent->lengths, data_item_ref->parent->layout);
+        nn::workload_data<nn::layout_f32> data(data_item->parent->data_buffer, data_item->parent->lengths, data_item->parent->layout);
+        nn::workload_data<nn::layout_f32> reference(data_item_ref->parent->data_buffer, data_item_ref->parent->lengths, data_item_ref->parent->layout);
         auto& size = data_item->parent->lengths;
         for (auto n = 0u; n < size.t[0]; ++n)
             for (auto x = 0u; x < size.t[1]; ++x)
@@ -254,6 +260,61 @@ namespace
 
         return true;
     }
+
+    void run_primitiv_api(
+        nn::workload_data<>* forward_data_input,
+        nn::workload_data<>* forward_seed_input,
+        nn::workload_data<>* forward_if_train_input,
+        nn::workload_data<>* forward_output,        
+        nn::workload_data<>* backward_input,        //< Buffer with input to backprop
+        nn::workload_data<>* backward_error_delta,  //< Buffer for output of backprop calculation
+        uint32_t input_fmaps,
+        uint32_t batch,
+        float drop_rate)
+    {
+        nn_device_primitives_description_t device_primitives_description;
+        nn_device_get_primitives_description(&device_primitives_description);
+        assert(device_primitives_description.version_first <= 0);
+        assert(device_primitives_description.version_last >= 0);
+
+        nn_primitives_0_t primitives;
+        nn_device_get_primitives(0, &primitives);
+        nn_device_t *device = primitives.create_device_with_thread_count(0, nullptr);
+
+        nn_primitive_handle_t primitive = primitives.create_handle.dropout_f32(
+          device,
+          1, 1, input_fmaps, batch , drop_rate, nullptr);
+
+        // 1. Make & prepare inputs to dropout. as we have opaque_data given we can
+        nn_opaque_data_t* input_internal[3];
+        input_internal[0] = reinterpret_cast<nn_opaque_data_t*>(forward_data_input);
+        input_internal[1] = reinterpret_cast<nn_opaque_data_t*>(forward_seed_input);
+        input_internal[2] = reinterpret_cast<nn_opaque_data_t*>(forward_if_train_input);
+
+        assert(forward_data_input->parent->delta_buffer == nullptr);
+        assert(forward_output->parent->delta_buffer == nullptr);
+
+        forward_data_input->parent->delta_buffer = backward_error_delta->parent->data_buffer; // this is backward_output for primitives API
+        forward_output->parent->delta_buffer = backward_input->parent->data_buffer; // this is backward_input for primitives API
+
+        // 2. prepare output buffer 
+        nn_opaque_data_t* output_internal = reinterpret_cast<nn_opaque_data_t*>(forward_output);
+
+        // 3. Call droput backward
+        nn_event_t dropout = primitives.backward_async(
+            primitive, 3, input_internal, 0, nullptr, 1, &output_internal, 0, nullptr, nullptr);
+
+        primitives.wait(1, &dropout);
+
+        // Cleanup
+        forward_data_input->parent->delta_buffer = nullptr;
+        forward_output->parent->delta_buffer = nullptr;
+
+        primitives.delete_event(dropout);
+        primitives.delete_primitive(primitive);
+        primitives.delete_device(device);
+    }
+
 
     void run_test(
         uint32_t input_fmaps,
@@ -291,14 +352,18 @@ namespace
 
         for (uint32_t n = 0; n < reinterpret_cast<nn::data<float>**>(input_datas)[0]->size[1]; ++n)
             for (uint32_t x = 0; x < reinterpret_cast<nn::data<float>**>(input_datas)[0]->size[0]; ++x)
-                (*reinterpret_cast<nn::data<float>**>(input_datas)[0])(x, n) = 1.0f;
+                (*reinterpret_cast<nn::data<float>**>(input_datas)[0])(x, n) = 1.0f * static_cast<float>(n + x);
 
         (*reinterpret_cast<nn::data<int32_t>**>(input_datas)[1])(0) = seed;
         (*reinterpret_cast<nn::data<int32_t>**>(input_datas)[2])(0) = 1;
 
         for (uint32_t n = 0; n < reinterpret_cast<nn::data<float>**>(input_datas)[3]->size[1]; ++n)
             for (uint32_t x = 0; x < reinterpret_cast<nn::data<float>**>(input_datas)[3]->size[0]; ++x)
-                (*reinterpret_cast<nn::data<float>**>(input_datas)[3])(x, n) = 0.5f;
+                (*reinterpret_cast<nn::data<float>**>(input_datas)[3])(x, n) = 0.5f * static_cast<float>(n + x);
+
+        // Run optimized code.
+        NN_API_STATUS status;
+        EXPECT_EQ(NN_API_STATUS_OK, di.workload_execute_function(workload, (void **)input_datas, nullptr, &status));
 
         // Get refernces to all buffers used by dropout and its backprop.
         // "Inputs" to backprop and forward pass.
@@ -314,20 +379,11 @@ namespace
         auto backward_error_delta = dropout_backprop->output[0];
 
         // Create reference outputs with same layout and sizes.
-        nn::workload_data<float> ref_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
-        nn::workload_data<float> ref_forward_output(forward_output->parent->lengths, forward_output->parent->layout);
+        nn::workload_data<> ref_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
+        nn::workload_data<> ref_forward_output(forward_output->parent->lengths, forward_output->parent->layout);
 
         std::memset(ref_backward_error_delta.parent->data_buffer, 0, ref_backward_error_delta.parent->buffer_size);
         std::memset(ref_forward_output.parent->data_buffer, 0, ref_forward_output.parent->buffer_size);
-
-        // Run optimized code.
-        NN_API_STATUS status;
-        EXPECT_EQ(NN_API_STATUS_OK, di.workload_execute_function(workload, (void **)input_datas, nullptr, &status));
-
-        // Run naive code.
-        forward_data_input->parent->data_buffer = reinterpret_cast<nn::data<int32_t>**>(input_datas)[0]->buffer;
-        forward_seed_input->parent->data_buffer = reinterpret_cast<nn::data<int32_t>**>(input_datas)[1]->buffer;
-        forward_if_train_input->parent->data_buffer = reinterpret_cast<nn::data<int32_t>**>(input_datas)[2]->buffer;
 
         // Check backward pass of training.
         // Also check forward pass of training (do not confuse with test pass).
@@ -345,6 +401,20 @@ namespace
             forward_if_train_input,
             &ref_forward_output);
 
+        // Run dropout training using primitive API 
+        nn::workload_data<> prim_backward_error_delta(backward_error_delta->parent->lengths, backward_error_delta->parent->layout);
+
+        run_primitiv_api(
+            static_cast<nn::workload_data<>*>(forward_data_input),
+            static_cast<nn::workload_data<>*>(forward_seed_input), 
+            static_cast<nn::workload_data<>*>(forward_if_train_input), 
+            static_cast<nn::workload_data<>*>(forward_output), 
+            static_cast<nn::workload_data<>*>(backward_data_input),
+            &prim_backward_error_delta,
+            input_fmaps,
+            batch,
+            drop_rate);
+
         if (negative)
         {
             // Random error for each buffer.
@@ -356,14 +426,17 @@ namespace
 
             static_cast<float*>(backward_error_delta->parent->data_buffer)[backward_error_index] += 1.0f;
             static_cast<float*>(forward_output->parent->data_buffer)[forward_error_index] += 1.0f;
+            static_cast<float*>(prim_backward_error_delta.parent->data_buffer)[backward_error_index] += 1.0f;
 
             EXPECT_NE(true, compare_data_items(backward_error_delta, &ref_backward_error_delta));
             EXPECT_NE(true, compare_data_items(forward_output, &ref_forward_output));
+            EXPECT_NE(true, compare_data_items(&prim_backward_error_delta, &ref_backward_error_delta));
         }
         else
         {
             EXPECT_EQ(true, compare_data_items(backward_error_delta, &ref_backward_error_delta));
             EXPECT_EQ(true, compare_data_items(forward_output, &ref_forward_output));
+            EXPECT_EQ(true, compare_data_items(&prim_backward_error_delta, &ref_backward_error_delta));
         }
 
         unload_device_and_delete_workload(&di, workload);
@@ -373,6 +446,9 @@ namespace
         delete reinterpret_cast<nn::data<int32_t>**>(input_datas)[2];
         delete reinterpret_cast<nn::data<float>**>(input_datas)[3];
     }
+
+
+
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -394,4 +470,3 @@ TEST(cpu_dropout_training, standard_square_negative)
                 for (auto seed : { 1, 10, 50 } )
                     run_test(in_z, batch, ratio, seed, true);
 }
-

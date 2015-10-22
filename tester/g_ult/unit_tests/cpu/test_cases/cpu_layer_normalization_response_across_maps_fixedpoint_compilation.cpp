@@ -26,6 +26,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "tester/g_ult/unit_tests/cpu/naive_implementations.h"
+#include <gtest/gtest.h>
 
 namespace {
     void test_setup(nn_device_description_t &device_description, nn_device_interface_0_t &device_interface_0) {
@@ -169,6 +170,8 @@ bool ult_nn_lrn_fp_check_outputs(
             }
         }
     }
+
+    delete[] zxyref;
 
     return passed;
 }

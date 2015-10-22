@@ -29,8 +29,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <random>
 #include <limits>
 
-
-
 //--------------RANDOM DATA GENERATOR-------------------//
 void nn_data_populate(
         nn::data<float>* in_out,
@@ -40,10 +38,10 @@ void nn_data_populate(
         float max_val) {
 
     std::mt19937 generator(1);
-    std::uniform_real_distribution<double> distribution(min_val,max_val);
+    std::uniform_real_distribution<float> distribution(min_val,max_val);
 
-    auto buffer_ptr = reinterpret_cast<float*> (in_out->buffer);
-    uint32_t element_nr = in_out->count();
+    auto buffer_ptr = static_cast<float*> (in_out->buffer);
+    uint32_t element_nr = static_cast<uint32_t>(in_out->count());
 
     while(element_nr--)
         *buffer_ptr++ = (const_val) ? const_val_value : distribution(generator);
@@ -62,4 +60,47 @@ void nn_data_populate(
         float max_val) {
 
         return nn_data_populate(in_out,false,0,min_val,max_val);
+    }
+
+    void nn_data_populate_normal_distribution(
+        nn::data<float>* in_out,
+        float mean,
+        float delta ) {
+    std::mt19937 generator(1);
+    std::normal_distribution<float> distribution( mean, delta );
+
+    auto buffer_ptr = static_cast<float*> (in_out->buffer);
+    uint32_t element_nr = static_cast<uint32_t>(in_out->count());
+
+    while(element_nr--)
+        *buffer_ptr++ = distribution( generator );
+    };
+
+    bool compare_data(
+        nn::data<float>* item,
+        nn::data<float>* ref_item,
+        float relative_error_threshold,
+        float absolute_error_threshold,
+        float absoulte_error_limit) {
+
+        if( item->count() == ref_item->count() ) {
+            auto elem_nr = item->count();
+            float *workload_buf = static_cast<float*>(item->buffer),
+                  *ref_buf      = static_cast<float*>(ref_item->buffer);
+
+            float diff = 0;
+            for(auto idx = 0u; idx < item->count(); ++idx){
+                float workload_val = workload_buf[idx];
+                float ref_val      = ref_buf[idx];
+
+                    if( fabs(workload_val) < absoulte_error_limit) {
+                        if(fabs( workload_val - ref_val ) > absolute_error_threshold) {
+                            return false;
+                        }
+                    } else
+                        if(fabs(workload_val - ref_val) / fabs(ref_val) > relative_error_threshold)
+                            return false;
+            }
+        }
+        return true;
     }

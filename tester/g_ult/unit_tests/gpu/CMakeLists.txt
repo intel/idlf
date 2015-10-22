@@ -72,38 +72,38 @@ set_target_properties(${ULT_EXE_NAME}
                       PROPERTIES 
                       PROJECT_LABEL gpu) 
 
-if(RUN_ULTS_OFFLINE)
-    add_test(${ULT_EXE_NAME} ${ULTS_RUN_DIR}/${ULT_EXE_NAME})
-    message (STATUS "add_test ...................... " ${ULT_EXE_NAME} ${ULTS_RUN_DIR}/${ULT_EXE_NAME})
-else()
+#if(RUN_ULTS_OFFLINE)
+    #add_test(${ULT_EXE_NAME} ${ULTS_RUN_DIR}/${ULT_EXE_NAME})
+    #message (STATUS "add_test ...................... " ${ULT_EXE_NAME} ${ULTS_RUN_DIR}/${ULT_EXE_NAME})
+#else()
 
-    if(NOT UNIX)
-        find_program(GFLAGS_EXE_DIR ${GFLAGS_BINARY_NAME})
-        message("GFLAGS: ${GFLAGS_EXE_DIR}")
+    #if(NOT UNIX)
+        #find_program(GFLAGS_EXE_DIR ${GFLAGS_BINARY_NAME})
+        #message("GFLAGS: ${GFLAGS_EXE_DIR}")
 
-        if(NOT(GFLAGS_EXE_DIR STREQUAL "GFLAGS_EXE_DIR-NOTFOUND"))
-            add_custom_command(TARGET ${ULT_EXE_NAME}
-                           POST_BUILD
-                           WORKING_DIRECTORY ${ULTS_RUN_DIR}/
-                           COMMAND ${GFLAGS_EXE_DIR} /i ${ULT_EXE_NAME}.exe +ust +hpa )
-        endif()
-    endif()
+        #if(NOT(GFLAGS_EXE_DIR STREQUAL "GFLAGS_EXE_DIR-NOTFOUND"))
+            #add_custom_command(TARGET ${ULT_EXE_NAME}
+                           #POST_BUILD
+                           #WORKING_DIRECTORY ${ULTS_RUN_DIR}/
+                           #COMMAND ${GFLAGS_EXE_DIR} /i ${ULT_EXE_NAME}.exe +ust +hpa )
+        #endif()
+    #endif()
 
-    # Add post-build test run event	
-    add_custom_command(TARGET ${ULT_EXE_NAME}
-                       POST_BUILD
-                       WORKING_DIRECTORY ${ULTS_RUN_DIR}
-                       COMMAND ${ULT_EXE_NAME} )
+    ## Add post-build test run event	
+    #add_custom_command(TARGET ${ULT_EXE_NAME}
+                       #POST_BUILD
+                       #WORKING_DIRECTORY ${ULTS_RUN_DIR}
+                       #COMMAND ${ULT_EXE_NAME} )
                        
-    if(NOT UNIX)
-        if(NOT(GFLAGS_EXE_DIR STREQUAL "GFLAGS_EXE_DIR-NOTFOUND"))
-            add_custom_command(TARGET ${ULT_EXE_NAME}
-                           POST_BUILD
-                           WORKING_DIRECTORY ${ULTS_RUN_DIR}
-                           COMMAND ${GFLAGS_EXE_DIR} /i ${ULT_EXE_NAME}.exe -ust -hpa )
-        endif()
-     endif()
-endif()
+    #if(NOT UNIX)
+        #if(NOT(GFLAGS_EXE_DIR STREQUAL "GFLAGS_EXE_DIR-NOTFOUND"))
+            #add_custom_command(TARGET ${ULT_EXE_NAME}
+                           #POST_BUILD
+                           #WORKING_DIRECTORY ${ULTS_RUN_DIR}
+                           #COMMAND ${GFLAGS_EXE_DIR} /i ${ULT_EXE_NAME}.exe -ust -hpa )
+        #endif()
+     #endif()
+#endif()
 
 # Set library dependencies
 target_link_libraries(${ULT_EXE_NAME} gtest device_gpu ${OPENCL_LIBRARIES})

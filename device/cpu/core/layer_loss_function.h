@@ -42,7 +42,7 @@ namespace layer
             size_t input_size_x,
             size_t input_size_y,
             size_t input_size_z,
-            size_t batch_size, 
+            size_t batch_size,
             nn_device_internal *device);
 
         ~loss_function_f32() { delete arithmetic_primitive; }

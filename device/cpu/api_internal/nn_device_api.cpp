@@ -46,7 +46,10 @@ nn_device_interface_0_t device_interface_0 = {
     nn_workflow_item_delete_0_function,
     nn_device_parameter_get_0_function,
     nn_device_parameter_set_0_function,
-    nn_translate_api_status_0_function
+    nn_translate_api_status_0_function,
+    nn_workload_query_param_0_function,
+    nn_workload_recover_param_0_function,
+    nn_set_use_jit_primitives_0_function
 };
 
 /* loads & initializes device
@@ -122,9 +125,9 @@ NN_API_CALL int32_t NN_API_CALL_CONVENTION nn_device_interface_open(
     switch(version) {
     default:
         return -3;
-    case 0: 
+    case 0:
         memcpy(interface, &device_interface_0, sizeof(device_interface_0));
-        reinterpret_cast<nn_device_interface_0_t*>(interface)->device = reinterpret_cast<nn_device_t*>(new nn_device_internal);
+        reinterpret_cast<nn_device_interface_0_t*>(interface)->device = reinterpret_cast<nn_device_t*>(new nn_device_internal());
         if (reinterpret_cast<nn_device_interface_0_t*>(interface)->device == nullptr)
         {
             return -1;

@@ -37,7 +37,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <vector>
 
 // NN_CODE_UNREACHABLE signal to supporting compiler that specific location in code cannot be reached
-#if defined _MSC_VER 
+#if defined _MSC_VER
 #   define NN_UNREACHABLE_CODE __assume(0)
 #endif
 
@@ -69,11 +69,16 @@ namespace int16_fixedpoint
         template<> struct datatype_to_enum<int32_t> : std::integral_constant<nn_workload_data_type_t, NN_DATATYPE_INT32>{};
     }
 
-    template<typename T_output_type>
-    const nn_workload_data_layout_t& fully_connected_i16<T_output_type>::out_layout = nn::workload_data<T_output_type>::layout.pnzxyq;
+    template<typename T> inline nn_workload_data_layout_t &data_helper_layout_lookup_pnzxyq();
+    template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_pnzxyq<float>() { return nn::layout_t<nn::layout_pnzxyq_f32>::layout; }
+    template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_pnzxyq<int16_t>() { return nn::layout_t<nn::layout_pnzxyq_i16>::layout; }
+    template<> inline nn_workload_data_layout_t &data_helper_layout_lookup_pnzxyq<int32_t>() { return nn::layout_t<nn::layout_pnzxyq_i32>::layout; }
 
     template<typename T_output_type>
-    const nn_workload_data_layout_t& fully_connected_i16<T_output_type>::in_layout = nn::workload_data<int16_t>::layout.pnzxyq;
+    const nn_workload_data_layout_t& fully_connected_i16<T_output_type>::out_layout = data_helper_layout_lookup_pnzxyq<T_output_type>();
+
+    template<typename T_output_type>
+    const nn_workload_data_layout_t& fully_connected_i16<T_output_type>::in_layout = nn::layout_t<nn::layout_pnzxyq_i16>::layout;
 
     template<typename T_output_type>
     fully_connected_i16<T_output_type>::fully_connected_i16(
@@ -221,6 +226,7 @@ namespace int16_fixedpoint
             // Cleanup dynamic memory.
             for (auto thread_id = 0u; thread_id < num_hardware_threads; ++thread_id)
             {
+                delete request_handles[thread_id]->output_view;
                 delete request_handles[thread_id];
             }
 
@@ -295,7 +301,7 @@ namespace int16_fixedpoint
             weights.size[1]);
 
         //TODO: validate weight format
-        nn_workload_data_layout_t layout = nn::workload_data<int16_t>::layout.xzynpq;
+        nn_workload_data_layout_t layout = nn::layout_t<nn::layout_xzynpq_i16>::layout;
 
         const unsigned int IFMBlock = 2;
         const unsigned int OFMBlock = 8;
@@ -337,7 +343,7 @@ namespace int16_fixedpoint
             weights.size[3]);
 
         //TODO: validate weight format
-        nn_workload_data_layout_t layout = nn::workload_data<int16_t>::layout.xzynpq;
+        nn_workload_data_layout_t layout = nn::layout_t<nn::layout_xzynpq_i16>::layout;
 
         const unsigned int IFMBlock = 2;
         const unsigned int OFMBlock = 8;
@@ -369,7 +375,7 @@ namespace int16_fixedpoint
     nn::workload_data<int32_t> *fully_connected_i16<T_output_type>::create_bias(const nn::data<int32_t, 1> &bias)
     {
         //TODO: validate bias format
-        nn_workload_data_layout_t layout = nn::workload_data<int32_t>::layout.zxynpq;
+        nn_workload_data_layout_t layout = nn::layout_t<nn::layout_zxynpq_i32>::layout;
 
         nn_workload_data_coords_t size = { 1, static_cast<uint32_t>(bias.size[0]), 1, 1, 1, 1 };
         auto result = new nn::workload_data<std::int32_t>(size, layout);

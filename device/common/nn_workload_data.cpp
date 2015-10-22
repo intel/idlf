@@ -25,26 +25,22 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include <stdint.h>
-#include <string.h>
-#include <stdlib.h>
+#include <cstdint>
+#include <cstring>
+#include <cstdlib>
+#include <stdexcept>
+#include <string>
 #include "nn_workload_data.h"
+#include "nn_allocate.h"
 
-#define BUFFER_ALIGNMENT 4096
-#define BUFFER_SIZE_ALIGNEMENT 4096
 /* For functions parameters validation */
 #define NN_COORD_SUM (NN_DATA_COORD_n + NN_DATA_COORD_x + NN_DATA_COORD_y + NN_DATA_COORD_z + NN_DATA_COORD_p + NN_DATA_COORD_q)
-
-
-template <typename T1, typename T2> T1 nn_align(T1 a, T2 b){
-    return (a + b - 1) / b * b;
-}
 
 nn_workload_data_core_t::nn_workload_data_core_t(uint32_t data_type_size,
                                                  const nn_workload_data_coords_t lengths,
                                                  const nn_workload_data_layout_t layout,
                                                  void *buffer,
-                                                 bool empty_data,
+                                                 bool allow_empty_data,
                                                  bool allocate_delta = false)
     : data_type_size(data_type_size),
       lengths(lengths),
@@ -85,19 +81,11 @@ nn_workload_data_core_t::nn_workload_data_core_t(uint32_t data_type_size,
     {
         data_buffer = buffer;
         use_client_buffer = 1;
-    } else if (empty_data){
+    } else if (allow_empty_data){
         data_buffer = nullptr;
         use_client_buffer = 1;
     } else {
-#if defined(__linux__) || defined(__CYGWIN__)
-        if (0 !=
-            posix_memalign(&data_buffer, BUFFER_ALIGNMENT, nn_align(buffer_size, BUFFER_SIZE_ALIGNEMENT))) {
-            data_buffer = nullptr;
-        }
-#else
-        data_buffer =
-            (void *)_aligned_malloc(nn_align(buffer_size, BUFFER_SIZE_ALIGNEMENT), BUFFER_ALIGNMENT);
-#endif // defined(__linux__) || defined(__CYGWIN__)
+        data_buffer = nn_allocate_aligned(buffer_size);
 
         if (data_buffer == nullptr) {
             assert(0);
@@ -107,58 +95,35 @@ nn_workload_data_core_t::nn_workload_data_core_t(uint32_t data_type_size,
 
     if(allocate_delta)
     {
-#if defined(__linux__) || defined(__CYGWIN__)
-        if (0 !=
-            posix_memalign(&delta_buffer, BUFFER_ALIGNMENT, nn_align(buffer_size, BUFFER_SIZE_ALIGNEMENT))) {
-            delta_buffer = nullptr;
-        }
-#else
-        delta_buffer =
-            (void *)_aligned_malloc(nn_align(buffer_size, BUFFER_SIZE_ALIGNEMENT), BUFFER_ALIGNMENT);
-#endif // defined(__linux__) || defined(__CYGWIN__)
+        delta_buffer = nn_allocate_aligned(buffer_size);
 
         if(delta_buffer == nullptr) {
             assert(0);
             if(use_client_buffer == 0) {
-#if defined(__linux__) || defined(__CYGWIN__)
-                free(data_buffer);
-#else
-                _aligned_free(data_buffer);
-#endif //__linux__
+                nn_free_aligned(data_buffer);
             }
             throw std::bad_alloc();
         }
     }
+
+    delete[] size;
 }
 
 nn_workload_data_core_t::~nn_workload_data_core_t() {
     if (use_client_buffer == 0) {
 
-#if defined(__linux__) || defined(__CYGWIN__)
-        if(delta_buffer != data_buffer && delta_buffer != nullptr)
-            free(delta_buffer);
-        free(data_buffer);
-
-#else
-        if(delta_buffer != data_buffer && delta_buffer != nullptr)
-            _aligned_free(delta_buffer);
-        _aligned_free(data_buffer);
-#endif //__linux__
+        if(delta_buffer != data_buffer)
+            nn_free_aligned(delta_buffer);
+        nn_free_aligned(data_buffer);
     }
+
+    delete[] strides;
 }
 
 void nn_workload_data_core_t::allocate_delta_buffer(){
     if(delta_buffer == nullptr)
     {
-#if defined(__linux__) || defined(__CYGWIN__)
-        if (0 !=
-            posix_memalign(&delta_buffer, BUFFER_ALIGNMENT, nn_align(buffer_size, BUFFER_SIZE_ALIGNEMENT))) {
-            delta_buffer = nullptr;
-        }
-#else
-        delta_buffer =
-            (void *)_aligned_malloc(nn_align(buffer_size, BUFFER_SIZE_ALIGNEMENT), BUFFER_ALIGNMENT);
-#endif // defined(__linux__) || defined(__CYGWIN__)
+        delta_buffer = nn_allocate_aligned(buffer_size);
 
         if(delta_buffer == nullptr) {
             throw std::bad_alloc();
@@ -170,48 +135,46 @@ void nn_workload_data_core_t::allocate_delta_buffer(){
         assert(0);
     }
 
-    memset(delta_buffer, 0, nn_align(buffer_size, BUFFER_SIZE_ALIGNEMENT));
+    memset(delta_buffer, 0, nn_aligned_size(buffer_size));
+}
+
+namespace
+{
+template <typename T>
+void check_not_null(T* ptr)
+{
+    if (ptr == nullptr)
+        throw std::runtime_error("unexpected null pointer passed");
 }
 
 /*
     Allocates and fills out nn_workload_data->parent structure.
     Does not allocate nn_workload_data nor nn_workload_data->parent->data_buffer
 */
-static NN_DATA_STATUS nn_workload_data_parent_create(nn_workload_data_t *nn_workload_data,
-                                                     const nn_workload_data_coords_t *lenghts,
-                                                     const nn_workload_data_layout_t *layout,
-                                                     void *buffer,
-                                                     bool  empty_data,
-                                                     bool  allocate_delta) {
+static void nn_workload_data_parent_create(nn_workload_data_t *nn_workload_data,
+                                           const nn_workload_data_coords_t *lenghts,
+                                           const nn_workload_data_layout_t *layout,
+                                           void *buffer,
+                                           bool  allow_empty_data,
+                                           bool  allocate_delta) {
     uint32_t ordering_coord_sum = 0;
-    uint32_t i;
 
-    assert(nn_workload_data != NULL);
-    assert(lenghts != NULL);
-    assert(layout != NULL);
-
-    if (nn_workload_data == NULL || lenghts == NULL || layout == NULL)
-    {
-        return NN_DATA_STATUS_ERROR_INVALID_POINTER;
-    }
+    check_not_null(nn_workload_data);
+    check_not_null(lenghts);
+    check_not_null(layout);
 
     assert(lenghts->dimension==layout->ordering.dimension);
 
-    for (i = 0; i < lenghts->dimension; i++)
+    for (uint32_t i = 0; i < static_cast<uint32_t>(lenghts->dimension); i++)
     {
         if ((lenghts->t[i] == 0) || (layout->ordering.t[i] > NN_DATA_COORD_MAX))
-        {
-            return NN_DATA_STATUS_ERROR_INVALID_MEMORY_LAYOUT;
-        }
-
+            throw std::runtime_error("invalid memory layout for dimension " + std::to_string(i));
         ordering_coord_sum += layout->ordering.t[i];
     }
 
     /* validate correct ordering input */
     if (ordering_coord_sum != NN_COORD_SUM)
-    {
-        return NN_DATA_STATUS_ERROR_INVALID_MEMORY_LAYOUT;
-    }
+        throw std::runtime_error("invalid memory layout -> doesn't provide full ordering");
 
     uint32_t data_type_size;
     if (layout->data_type == NN_DATATYPE_FLOAT) {
@@ -221,57 +184,49 @@ static NN_DATA_STATUS nn_workload_data_parent_create(nn_workload_data_t *nn_work
     } else if (layout->data_type == NN_DATATYPE_INT32) {
         data_type_size = sizeof(int);
     } else {
-        return NN_DATA_STATUS_ERROR_INVALID_MEMORY_LAYOUT;
+        throw std::runtime_error("invalid memory layout -> invalid data type");
     }
 
     // nn_workload_data is just a view, parent is the actual data
-    nn_workload_data->parent = std::make_shared<nn_workload_data_core_t>(data_type_size, *lenghts, *layout, buffer, empty_data, allocate_delta);
-
-    return NN_DATA_STATUS_OK;
+    nn_workload_data->parent = std::make_shared<nn_workload_data_core_t>(data_type_size, *lenghts, *layout, buffer, allow_empty_data, allocate_delta);
 }
+
+} //namespace
 
 /*
     Creates nn_workload_data structure using workload_data allocated by a caller.
     Optionally also data buffer may provided by a caller.
 
     nn_workload_data - pointer to the structure allocated by a caller
-    empty_data       - if set, there will be no data allocated internally nor caller data will be used,
+    allow_empty_data       - if set, there will be no data allocated internally nor caller data will be used,
                        this option can be used when user require only data structure definition, without
                        actual data inside
     buffer           - pointer to the data buffer. If NULL, it will be allocated by this function.
     lenghts          - size of data structure in each dimension.
     layout           - contains information such as ordering and data type.
 */
-NN_DATA_STATUS nn_workload_data_placement_create(nn_workload_data_t *nn_workload_data,
-                                                 void *buffer,
-                                                 const nn_workload_data_coords_t *lenghts,
-                                                 const nn_workload_data_layout_t *layout,
-                                                 bool empty_data,
-                                                 bool allocate_delta) {
-    NN_DATA_STATUS status;
-    uint32_t i;
+void nn_workload_data_placement_create(nn_workload_data_t *nn_workload_data,
+                                       void *buffer,
+                                       const nn_workload_data_coords_t *lenghts,
+                                       const nn_workload_data_layout_t *layout,
+                                       bool allow_empty_data,
+                                       bool allocate_delta) {
+    check_not_null(nn_workload_data);
+    check_not_null(lenghts);
+    check_not_null(layout);
 
-    assert(nn_workload_data != NULL);
-    assert(lenghts != NULL);
-    assert(layout != NULL);
+    if(lenghts->dimension != layout->ordering.dimension)
+        throw std::runtime_error("lengths size is different than layout");
 
-    if (nn_workload_data == NULL || lenghts == NULL || layout == NULL)
-    {
-        return NN_DATA_STATUS_ERROR_INVALID_POINTER;
-    }
+    std::unique_ptr<nn_workload_data_coords_t> temp(nn_workload_data_coords_t::create(lenghts->dimension));
 
-    assert(lenghts->dimension == layout->ordering.dimension);
+    nn_workload_data->view_begin = *temp;
+    nn_workload_data->view_end = *lenghts;
 
-    for (i = 0; i < lenghts->dimension; i++)
-        nn_workload_data->view_end.t[i] = lenghts->t[i] - 1;
+    for (int i = 0; i < nn_workload_data->view_end.dimension; i++)
+        --nn_workload_data->view_end.t[i];
 
-    status = nn_workload_data_parent_create(nn_workload_data, lenghts, layout, buffer, empty_data, allocate_delta);
-    if (status != NN_DATA_STATUS_OK)
-    {
-        return status;
-    }
-
-    return NN_DATA_STATUS_OK;
+    nn_workload_data_parent_create(nn_workload_data, lenghts, layout, buffer, allow_empty_data, allocate_delta);
 }
 
 /*
@@ -280,42 +235,42 @@ NN_DATA_STATUS nn_workload_data_placement_create(nn_workload_data_t *nn_workload
     Resulting view has the same layout as original.
     If view cannot be created (outside image) - 0 is returned.
 */
-NN_DATA_STATUS nn_workload_data_placement_create_view(nn_workload_data_t *nn_workload_data,
-                                                      const nn_workload_data_t *nn_source,
-                                                      const nn_workload_data_coords_t *coords_begin,
-                                                      const nn_workload_data_coords_t *coords_end) {
+void nn_workload_data_placement_create_view(nn_workload_data_t *nn_workload_data,
+                                            const nn_workload_data_t *nn_source,
+                                            const nn_workload_data_coords_t *coords_begin,
+                                            const nn_workload_data_coords_t *coords_end) {
     uint32_t i;
-
-    assert(nn_workload_data != NULL);
-    assert(nn_source != NULL);
-    assert(coords_begin != NULL);
-    assert(coords_end != NULL);
-
-    if (nn_workload_data == NULL || nn_source == NULL || coords_begin == NULL || coords_end == NULL)
-    {
-        return NN_DATA_STATUS_ERROR_INVALID_POINTER;
-    }
+    check_not_null(nn_workload_data);
+    check_not_null(nn_source);
+    check_not_null(coords_begin);
+    check_not_null(coords_end);
 
     for (i = 0; i < nn_source->parent->dimension; i++)
     {
+        auto view_begin = nn_source->view_begin.t[i] + coords_begin->t[i];
+        auto view_end = nn_source->view_begin.t[i] + coords_end->t[i];
+        auto current_end = nn_source->view_end.t[i];
 
-        // check if the view is within the image
-        if (coords_begin->t[i] > nn_source->view_end.t[i])
-            return NN_DATA_STATUS_ERROR_INVALID_PARAMETERS;
+        auto check_in_current = [=](uint32_t arg, std::string what) {
+                if (arg > current_end)
+                    throw std::runtime_error("view " + what + " for dimension " + std::to_string(i)
+                        + " is outside the current buffer: " + std::to_string(arg) + " > "
+                        + std::to_string(current_end));
+            };
 
-        if (coords_end->t[i] > nn_source->view_end.t[i])
-            return NN_DATA_STATUS_ERROR_INVALID_PARAMETERS;
+        check_in_current(view_begin, "begin");
+        check_in_current(view_end, "end");
     }
 
     nn_workload_data->parent = nn_source->parent;
+    nn_workload_data->view_begin = nn_source->view_begin;
+    nn_workload_data->view_end = nn_source->view_end;
 
     for (i = 0; i < nn_source->parent->dimension; i++)
     {
         nn_workload_data->view_begin.t[i] = nn_source->view_begin.t[i] + coords_begin->t[i];
         nn_workload_data->view_end.t[i] = nn_source->view_begin.t[i] + coords_end->t[i];
     }
-
-    return NN_DATA_STATUS_OK;
 }
 
 
@@ -343,13 +298,9 @@ nn_workload_data_t * nn_workload_data_create_view(const nn_workload_data_t* sour
     if (nn_workload_data == NULL)
         return NULL;
 
-    if (0 != nn_workload_data_placement_create_view(
-        nn_workload_data,
-        source,
-        coords_begin,
-        coords_end
-        ))
-    {
+    try {
+        nn_workload_data_placement_create_view(nn_workload_data, source, coords_begin, coords_end);
+    } catch (...) {
         delete nn_workload_data;
         return NULL;
     }
@@ -361,23 +312,27 @@ nn_workload_data_t * nn_workload_data_create_view(const nn_workload_data_t* sour
 */
 uint32_t calculate_idx(const nn_workload_data_t* data, uint32_t n, uint32_t x, uint32_t y, uint32_t z, uint32_t p, uint32_t q)
 {
-    nn_workload_data_coords_t coordinates = { n, x, y, z, p, q };
+    uint32_t coordinates[6] = { n, x, y, z, p, q };
     uint32_t index = 0;
     uint32_t i;
 
-    assert(n <= (data->view_end.t[NN_DATA_COORD_n] - data->view_begin.t[NN_DATA_COORD_n]));
-    assert(x <= (data->view_end.t[NN_DATA_COORD_x] - data->view_begin.t[NN_DATA_COORD_x]));
-    assert(y <= (data->view_end.t[NN_DATA_COORD_y] - data->view_begin.t[NN_DATA_COORD_y]));
-    assert(z <= (data->view_end.t[NN_DATA_COORD_z] - data->view_begin.t[NN_DATA_COORD_z]));
-    assert(p <= (data->view_end.t[NN_DATA_COORD_p] - data->view_begin.t[NN_DATA_COORD_p]));
-    assert(q <= (data->view_end.t[NN_DATA_COORD_q] - data->view_begin.t[NN_DATA_COORD_q]));
+    auto view_end_array = &data->view_end.t[0];
+    auto view_begin_array = &data->view_begin.t[0];
+    auto parent_strides_array = &data->parent->strides[0];
+
+    assert(n <= (view_end_array[NN_DATA_COORD_n] - view_begin_array[NN_DATA_COORD_n]));
+    assert(x <= (view_end_array[NN_DATA_COORD_x] - view_begin_array[NN_DATA_COORD_x]));
+    assert(y <= (view_end_array[NN_DATA_COORD_y] - view_begin_array[NN_DATA_COORD_y]));
+    assert(z <= (view_end_array[NN_DATA_COORD_z] - view_begin_array[NN_DATA_COORD_z]));
+    assert(p <= (view_end_array[NN_DATA_COORD_p] - view_begin_array[NN_DATA_COORD_p]));
+    assert(q <= (view_end_array[NN_DATA_COORD_q] - view_begin_array[NN_DATA_COORD_q]));
 
     for (i = 0; i < data->parent->dimension; i++)
     {
         uint32_t coordinate;
 
-        coordinate = (coordinates.t[i] + data->view_begin.t[i]);
-        index += coordinate * data->parent->strides[i];
+        coordinate = (coordinates[i] + view_begin_array[i]);
+        index += coordinate * parent_strides_array[i];
     }
 
     return index;
@@ -423,6 +378,14 @@ NN_DATA_STATUS nn_workload_copy(nn_workload_data_t* destination, const nn_worklo
     destination_sizes[NN_DATA_COORD_p] = destination->view_end.t[NN_DATA_COORD_p] - destination->view_begin.t[NN_DATA_COORD_p] + 1 ;
     destination_sizes[NN_DATA_COORD_q] = destination->view_end.t[NN_DATA_COORD_q] - destination->view_begin.t[NN_DATA_COORD_q] + 1 ;
 
+    if( (source_sizes[NN_DATA_COORD_n] != destination_sizes[NN_DATA_COORD_n]) ||
+        (source_sizes[NN_DATA_COORD_x] != destination_sizes[NN_DATA_COORD_x]) ||
+        (source_sizes[NN_DATA_COORD_y] != destination_sizes[NN_DATA_COORD_y]) ||
+        (source_sizes[NN_DATA_COORD_z] != destination_sizes[NN_DATA_COORD_z]) ||
+        (source_sizes[NN_DATA_COORD_p] != destination_sizes[NN_DATA_COORD_p]) ||
+        (source_sizes[NN_DATA_COORD_q] != destination_sizes[NN_DATA_COORD_q])
+        ) throw std::runtime_error("Error: Can not copy data, dimensions must be equal.");
+
     // Views sizes need to match
     if (memcmp(source_sizes, destination_sizes, sizeof(unsigned int) * (NN_DATA_COORD_MAX + 1)) != 0 )
     {
@@ -454,7 +417,7 @@ NN_DATA_STATUS nn_workload_copy(nn_workload_data_t* destination, const nn_worklo
                 break;
             }
         }
-        
+
         if(no_view)
         {
             memcpy( destination->parent->data_buffer, source->parent->data_buffer, destination->parent->buffer_size );
@@ -508,32 +471,43 @@ NN_DATA_STATUS nn_workload_copy(nn_workload_data_t* destination, const nn_worklo
     }
 }
 
-nn_workload_data_layout_t nn::layout_t<float>::nxyzpq = { { NN_DATA_COORD_n, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_FLOAT };
-nn_workload_data_layout_t nn::layout_t<float>::xyznpq = { { NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_n, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_FLOAT };
-nn_workload_data_layout_t nn::layout_t<float>::nzxypq = { { NN_DATA_COORD_n, NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_FLOAT };
-nn_workload_data_layout_t nn::layout_t<float>::pnzxyq = { { NN_DATA_COORD_p, NN_DATA_COORD_n, NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_q }, NN_DATATYPE_FLOAT };
-nn_workload_data_layout_t nn::layout_t<float>::pxyznq = { { NN_DATA_COORD_p, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_n, NN_DATA_COORD_q }, NN_DATATYPE_FLOAT };
-nn_workload_data_layout_t nn::layout_t<float>::pxqzyn = { { NN_DATA_COORD_p, NN_DATA_COORD_x, NN_DATA_COORD_q, NN_DATA_COORD_z, NN_DATA_COORD_y, NN_DATA_COORD_n }, NN_DATATYPE_FLOAT };
-nn_workload_data_layout_t nn::layout_t<float>::pzxyqn = { { NN_DATA_COORD_p, NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_q, NN_DATA_COORD_n }, NN_DATATYPE_FLOAT };
-nn_workload_data_layout_t nn::layout_t<float>::xyzpnq = { { NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_n, NN_DATA_COORD_q }, NN_DATATYPE_FLOAT };
-nn_workload_data_layout_t nn::layout_t<float>::xyzpqn = { { NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q, NN_DATA_COORD_n }, NN_DATATYPE_FLOAT };
-nn_workload_data_layout_t nn::layout_t<float>::yxzpqn = { { NN_DATA_COORD_y, NN_DATA_COORD_x, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q, NN_DATA_COORD_n }, NN_DATATYPE_FLOAT };
-nn_workload_data_layout_t nn::layout_t<float>::zxynpq = { { NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_n, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_FLOAT };
+nn_workload_data_layout_t nn::layout_t<nn::layout_nxyzpq_f32>::layout     = { { NN_DATA_COORD_n, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_FLOAT };
+nn_workload_data_layout_t nn::layout_t<nn::layout_xyznpq_f32>::layout     = { { NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_n, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_FLOAT };
+nn_workload_data_layout_t nn::layout_t<nn::layout_nzxypq_f32>::layout     = { { NN_DATA_COORD_n, NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_FLOAT };
+nn_workload_data_layout_t nn::layout_t<nn::layout_pnzxyq_f32>::layout     = { { NN_DATA_COORD_p, NN_DATA_COORD_n, NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_q }, NN_DATATYPE_FLOAT };
+nn_workload_data_layout_t nn::layout_t<nn::layout_pxyznq_f32>::layout     = { { NN_DATA_COORD_p, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_n, NN_DATA_COORD_q }, NN_DATATYPE_FLOAT };
+nn_workload_data_layout_t nn::layout_t<nn::layout_pxqzyn_f32>::layout     = { { NN_DATA_COORD_p, NN_DATA_COORD_x, NN_DATA_COORD_q, NN_DATA_COORD_z, NN_DATA_COORD_y, NN_DATA_COORD_n }, NN_DATATYPE_FLOAT };
+nn_workload_data_layout_t nn::layout_t<nn::layout_pzxyqn_f32>::layout     = { { NN_DATA_COORD_p, NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_q, NN_DATA_COORD_n }, NN_DATATYPE_FLOAT };
+nn_workload_data_layout_t nn::layout_t<nn::layout_xyzpnq_f32>::layout     = { { NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_n, NN_DATA_COORD_q }, NN_DATATYPE_FLOAT };
+nn_workload_data_layout_t nn::layout_t<nn::layout_xyzpqn_f32>::layout     = { { NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q, NN_DATA_COORD_n }, NN_DATATYPE_FLOAT };
+nn_workload_data_layout_t nn::layout_t<nn::layout_yxzpqn_f32>::layout     = { { NN_DATA_COORD_y, NN_DATA_COORD_x, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q, NN_DATA_COORD_n }, NN_DATATYPE_FLOAT };
+nn_workload_data_layout_t nn::layout_t<nn::layout_zxynpq_f32>::layout     = { { NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_n, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_FLOAT };
+nn_workload_data_layout_t nn::layout_t<nn::layout_pzqxyn_f32>::layout     = { { NN_DATA_COORD_p, NN_DATA_COORD_z, NN_DATA_COORD_q, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_n }, NN_DATATYPE_FLOAT };
+nn_workload_data_layout_t nn::layout_t<nn::layout_zxyn_f32>::layout       = nn::layout_t<nn::layout_zxynpq_f32>::layout;
+nn_workload_data_layout_t nn::layout_t<nn::layout_nx_f32>::layout         = nn::layout_t<nn::layout_nxyzpq_f32>::layout;
+nn_workload_data_layout_t nn::layout_t<nn::layout_zblockxyzn_f32>::layout = nn::layout_t<nn::layout_pxyznq_f32>::layout;
+nn_workload_data_layout_t nn::layout_t<nn::layout_oblockixyo_f32>::layout = nn::layout_t<nn::layout_pzxyqn_f32>::layout;
+nn_workload_data_layout_t nn::layout_t<nn::layout_oblockioxy_f32>::layout = nn::layout_t<nn::layout_pzqxyn_f32>::layout;
+nn_workload_data_layout_t nn::layout_t<nn::layout_nblockzxyn_f32>::layout = nn::layout_t<nn::layout_pzqxyn_f32>::layout;
+nn_workload_data_layout_t nn::layout_t<nn::layout_o_f32>::layout          = nn::layout_t<nn::layout_nxyzpq_f32>::layout;
+nn_workload_data_layout_t nn::layout_t<nn::layout_oi_f32>::layout         = nn::layout_t<nn::layout_yxzpqn_f32>::layout;
+nn_workload_data_layout_t nn::layout_t<nn::layout_oblockio_f32>::layout   = nn::layout_t<nn::layout_pzxyqn_f32>::layout;
+nn_workload_data_layout_t nn::layout_t<nn::layout_zxy_f32>::layout        = nn::layout_t<nn::layout_zxynpq_f32>::layout;
 
-nn_workload_data_layout_t nn::layout_t<int16_t>::nxyzpq = { { NN_DATA_COORD_n, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_INT32 };
-nn_workload_data_layout_t nn::layout_t<int16_t>::pnzxyq = { { NN_DATA_COORD_p, NN_DATA_COORD_n, NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_q }, NN_DATATYPE_INT16 };
-nn_workload_data_layout_t nn::layout_t<int16_t>::pxyznq = { { NN_DATA_COORD_p, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_n, NN_DATA_COORD_q }, NN_DATATYPE_INT16 };
-nn_workload_data_layout_t nn::layout_t<int16_t>::pzqxyn = { { NN_DATA_COORD_p, NN_DATA_COORD_z, NN_DATA_COORD_q, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_n }, NN_DATATYPE_INT16 };
-nn_workload_data_layout_t nn::layout_t<int16_t>::xyzpqn = { { NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q, NN_DATA_COORD_n }, NN_DATATYPE_INT16 };
-nn_workload_data_layout_t nn::layout_t<int16_t>::xzynpq = { { NN_DATA_COORD_x, NN_DATA_COORD_z, NN_DATA_COORD_y, NN_DATA_COORD_n, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_INT16 };
-nn_workload_data_layout_t nn::layout_t<int16_t>::ypznxq = { { NN_DATA_COORD_y, NN_DATA_COORD_p, NN_DATA_COORD_z, NN_DATA_COORD_n, NN_DATA_COORD_x, NN_DATA_COORD_q }, NN_DATATYPE_INT16 };
-nn_workload_data_layout_t nn::layout_t<int16_t>::zpxynq = { { NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_n, NN_DATA_COORD_q }, NN_DATATYPE_INT16 };
-nn_workload_data_layout_t nn::layout_t<int16_t>::zxynpq = { { NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_n, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_INT16 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_nxyzpq_i16>::layout     = { { NN_DATA_COORD_n, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_INT16 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_pnzxyq_i16>::layout     = { { NN_DATA_COORD_p, NN_DATA_COORD_n, NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_q }, NN_DATATYPE_INT16 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_pxyznq_i16>::layout     = { { NN_DATA_COORD_p, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_n, NN_DATA_COORD_q }, NN_DATATYPE_INT16 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_pzqxyn_i16>::layout     = { { NN_DATA_COORD_p, NN_DATA_COORD_z, NN_DATA_COORD_q, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_n }, NN_DATATYPE_INT16 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_xyzpqn_i16>::layout     = { { NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q, NN_DATA_COORD_n }, NN_DATATYPE_INT16 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_xzynpq_i16>::layout     = { { NN_DATA_COORD_x, NN_DATA_COORD_z, NN_DATA_COORD_y, NN_DATA_COORD_n, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_INT16 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_ypznxq_i16>::layout     = { { NN_DATA_COORD_y, NN_DATA_COORD_p, NN_DATA_COORD_z, NN_DATA_COORD_n, NN_DATA_COORD_x, NN_DATA_COORD_q }, NN_DATATYPE_INT16 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_zpxynq_i16>::layout     = { { NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_n, NN_DATA_COORD_q }, NN_DATATYPE_INT16 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_zxynpq_i16>::layout     = { { NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_n, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_INT16 };
 
-nn_workload_data_layout_t nn::layout_t<int32_t>::nxyzpq = { { NN_DATA_COORD_n, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_INT32 };
-nn_workload_data_layout_t nn::layout_t<int32_t>::pnzxyq = { { NN_DATA_COORD_p, NN_DATA_COORD_n, NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_q }, NN_DATATYPE_INT32 };
-nn_workload_data_layout_t nn::layout_t<int32_t>::xnyzpq = { { NN_DATA_COORD_x, NN_DATA_COORD_n, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_INT32 };
-nn_workload_data_layout_t nn::layout_t<int32_t>::xyzpqn = { { NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q, NN_DATA_COORD_n }, NN_DATATYPE_INT32 };
-nn_workload_data_layout_t nn::layout_t<int32_t>::xzynpq = { { NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q, NN_DATA_COORD_n }, NN_DATATYPE_INT32 };
-nn_workload_data_layout_t nn::layout_t<int32_t>::zpxynq = { { NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_n, NN_DATA_COORD_q }, NN_DATATYPE_INT32 };
-nn_workload_data_layout_t nn::layout_t<int32_t>::zxynpq = { { NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_n, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_INT32 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_nxyzpq_i32>::layout     = { { NN_DATA_COORD_n, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_INT32 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_pnzxyq_i32>::layout     = { { NN_DATA_COORD_p, NN_DATA_COORD_n, NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_q }, NN_DATATYPE_INT32 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_xnyzpq_i32>::layout     = { { NN_DATA_COORD_x, NN_DATA_COORD_n, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_INT32 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_xyzpqn_i32>::layout     = { { NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q, NN_DATA_COORD_n }, NN_DATATYPE_INT32 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_xzynpq_i32>::layout     = { { NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_q, NN_DATA_COORD_n }, NN_DATATYPE_INT32 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_zpxynq_i32>::layout     = { { NN_DATA_COORD_z, NN_DATA_COORD_p, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_n, NN_DATA_COORD_q }, NN_DATATYPE_INT32 };
+nn_workload_data_layout_t nn::layout_t<nn::layout_zxynpq_i32>::layout     = { { NN_DATA_COORD_z, NN_DATA_COORD_x, NN_DATA_COORD_y, NN_DATA_COORD_n, NN_DATA_COORD_p, NN_DATA_COORD_q }, NN_DATATYPE_INT32 };

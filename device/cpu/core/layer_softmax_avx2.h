@@ -31,6 +31,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace layer {
 class softmax_f32 : public nn_primitive_t {
+    friend class softmax_loss_f32;
+
   public:
     softmax_f32(size_t num_features, size_t batch_size, nn_device_internal *device);
 
@@ -40,12 +42,12 @@ class softmax_f32 : public nn_primitive_t {
 
     //TODO remove
     virtual void backward(
-        const nn::workload_data<float> *forward_output,
-        const nn::workload_data<float> *backward_input,
-        nn::workload_data<float> *backward_output);
+        const nn::workload_data<nn::layout_f32> *forward_output,
+        const nn::workload_data<nn::layout_f32> *backward_input,
+        nn::workload_data<nn::layout_f32> *backward_output);
 
-    virtual void backward(const std::vector<nn_workload_data_t *> &inputs, 
-                          const std::vector<const nn_workload_data_t *> &parameters, 
+    virtual void backward(const std::vector<nn_workload_data_t *> &inputs,
+                          const std::vector<const nn_workload_data_t *> &parameters,
                           const std::vector<const nn_workload_data_t *> &outputs) override;
 
     virtual std::vector<nn_workload_data_t *> create_inputs(bool allocate_delta = false) override;
@@ -55,14 +57,14 @@ class softmax_f32 : public nn_primitive_t {
     virtual bool validate_input(size_t index, nn_workload_data_t *data) override;
 
 private:
-    void run_softmax_work_item_batch8(const nn::workload_data<float> *input_view,
-                                      nn::workload_data<float> *output_view);
-    void run_softmax_work_item_latency(const nn::workload_data<float> *input_view,
-                                       nn::workload_data<float> *output_view);
-    void run_softmax_work_item_batch48(const nn::workload_data<float> *input_view,
-                                       nn::workload_data<float> *output_view);
+    void run_softmax_work_item_batch8(const nn::workload_data<nn::layout_f32> *input_view,
+                                      nn::workload_data<nn::layout_f32> *output_view);
+    void run_softmax_work_item_latency(const nn::workload_data<nn::layout_f32> *input_view,
+                                       nn::workload_data<nn::layout_f32> *output_view);
+    void run_softmax_work_item_batch48(const nn::workload_data<nn::layout_f32> *input_view,
+                                       nn::workload_data<nn::layout_f32> *output_view);
 
-    void forward(const nn::workload_data<float> *input, nn::workload_data<float> *output);
+    void forward(const nn::workload_data<nn::layout_f32> *input, nn::workload_data<nn::layout_f32> *output);
 
 protected:
     const size_t num_features, batch_size;

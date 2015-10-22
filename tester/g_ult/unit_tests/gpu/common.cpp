@@ -431,6 +431,8 @@ void convolve_ref( fp_func_activ             FA,
     unsigned int output_view_depth = output_view_end.t[NN_DATA_COORD_z]  - output_view_begin.t[NN_DATA_COORD_z] + 1;  
     unsigned int output_view_height = output_view_end.t[NN_DATA_COORD_y]  - output_view_begin.t[NN_DATA_COORD_y] + 1;  
     unsigned int output_view_width = output_view_end.t[NN_DATA_COORD_x]  - output_view_begin.t[NN_DATA_COORD_x] + 1;  
+    auto input_view_begin_x = input_view_begin.t[NN_DATA_COORD_x];
+    auto input_view_begin_y = input_view_begin.t[NN_DATA_COORD_y];
 
     for( unsigned int batch = 0; batch < output_view_num_batches; ++batch )
     {
@@ -476,8 +478,8 @@ void convolve_ref( fp_func_activ             FA,
                                 {
                                     float signal;
                                     // If value to be read is out of input scope then ignore that one
-                                    if( (x + i - center_x + input_view_begin.t[NN_DATA_COORD_x] >= 0) && (x + i - center_x + input_view_begin.t[NN_DATA_COORD_x] < inputs_width) &&
-                                        (y + j - center_y + input_view_begin.t[NN_DATA_COORD_y]>= 0) && (y + j - center_y + input_view_begin.t[NN_DATA_COORD_y]< inputs_height) )
+                                    if ((static_cast<int64_t>(x + i) - center_x + input_view_begin_x >= 0) && (static_cast<int64_t>(x + i) - center_x + input_view_begin_x < inputs_width) &&
+                                        (static_cast<int64_t>(y + j) - center_y + input_view_begin_y >= 0) && (static_cast<int64_t>(y + j) - center_y + input_view_begin_y < inputs_height))
                                     {
                                         signal = inputs[input_offset];
                                         dotProd += signal * filters[filter_offset ];
@@ -519,11 +521,11 @@ void init_data( float * &buffer, uint_least32_t bufferCount, float initValue )
     }
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-std::unique_ptr< nn::workload_data< float > > create_nn_workload_data_using_buffer( const float        *const buffer,
+std::unique_ptr< nn::workload_data<> > create_nn_workload_data_using_buffer( const float        *const buffer,
                                                                        nn_workload_data_layout_t          &buffer_layout,
                                                                        nn_workload_data_coords_t          &buffer_coords )
 {
-    return std::unique_ptr< nn::workload_data< float > >( new nn::workload_data< float >( ( void * )buffer, buffer_coords,
+    return std::unique_ptr< nn::workload_data<> >( new nn::workload_data<>( ( void * )buffer, buffer_coords,
                                                                                   buffer_layout ) );
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////

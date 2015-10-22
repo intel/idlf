@@ -35,8 +35,8 @@ namespace layer
 
         for (uint32_t parameter = 0; parameter < item->input.size(); ++parameter)
         {
-            auto input = reinterpret_cast<nn::workload_data<float>*>(item->input[parameter].get_data_view());
-            auto output = reinterpret_cast<nn::workload_data<float>*>(item->output[parameter]);
+            auto input = nn::workload_data_cast<nn::layout_f32>(item->input[parameter].get_data_view());
+            auto output = nn::workload_data_cast<nn::layout_f32>(item->output[parameter]);
 
             auto input_batch = input->parent->lengths.t[NN_DATA_COORD_n];
             auto output_batch = output->parent->lengths.t[NN_DATA_COORD_n];

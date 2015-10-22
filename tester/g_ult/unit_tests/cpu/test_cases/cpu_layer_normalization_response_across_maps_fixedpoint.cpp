@@ -27,6 +27,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "tester/g_ult/unit_tests/cpu/naive_implementations.h"
 #include "device/cpu/core/fixedpoint/layer_normalization_response_across_maps_int16_avx2.h"
+#include <gtest/gtest.h>
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -128,7 +129,7 @@ static void ult_nn_lrn_fp_initialize_work_item(
         1
     };
 
-    nn_workload_data_layout_t in_out_layout = nn::workload_data<int16_t>::layout.pxyznq;
+    nn_workload_data_layout_t in_out_layout = nn::layout_t<nn::layout_pxyznq_i16>::layout;
 
     nn::workload_data<int16_t> *output_data = new nn::workload_data<int16_t>(in_out_coords, in_out_layout);
 
@@ -151,6 +152,7 @@ static void ult_nn_lrn_fp_initialize_work_item(
 
     input_item = new nn_workload_item();
     input_item->type = NN_WORK_ITEM_TYPE_INPUT;
+    input_item->primitive = nullptr;
     nn::workload_data<int16_t> *input_data = new nn::workload_data<int16_t>(in_out_coords, in_out_layout);
 
     memcpy(input_data->parent->data_buffer, input, input_data->parent->buffer_size);
@@ -234,12 +236,22 @@ bool ult_nn_lrn_fp_check_outputs(
 
 static void ult_nn_lrn_fp_deinitialize_work_item(nn_workload_item* &work_item)
 {
+    for(auto& parameter : work_item->parameters)
+    {
+        delete parameter;
+        parameter = nullptr;
+    }
 
-    work_item->input.clear();
-    delete work_item->output[0];
+    for(auto& output : work_item->output)
+    {
+        delete output;
+        output = nullptr;
+    }
+
+    delete work_item->primitive;
+    work_item->primitive = nullptr;
 
     delete work_item;
-
     work_item = nullptr;
 }
 
@@ -378,6 +390,7 @@ static bool ult_perform_test(
 
     //// Cleanup.
     ult_nn_lrn_fp_deinitialize_work_item(work_item);
+    ult_nn_lrn_fp_deinitialize_work_item(input_item);
 
     ult_nn_lrn_fp_both_dealloc(
         input,

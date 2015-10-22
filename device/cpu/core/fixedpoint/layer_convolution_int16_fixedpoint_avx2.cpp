@@ -38,7 +38,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <vector>
 
 // NN_CODE_UNREACHABLE signal to supporting compiler that specific location in code cannot be reached
-#if defined _MSC_VER 
+#if defined _MSC_VER
 #   define NN_UNREACHABLE_CODE __assume(0)
 #endif
 
@@ -313,7 +313,7 @@ namespace int16_fixedpoint
             weights.size[3]);
 
         //TODO: validate weight format
-        nn_workload_data_layout_t layout = nn::workload_data<int16_t>::layout.ypznxq;
+        nn_workload_data_layout_t layout = nn::layout_t<nn::layout_ypznxq_i16>::layout;
 
         const unsigned int OFMpBlock = 2;
         const unsigned int OFMBlock = 32;
@@ -369,7 +369,7 @@ namespace int16_fixedpoint
     nn::workload_data<int32_t>* convolution_i16::create_bias(const nn::data<int32_t, 1> &bias)
     {
         //TODO: validate bias format
-        nn_workload_data_layout_t layout = nn::workload_data<int16_t>::layout.zxynpq;
+        nn_workload_data_layout_t layout = nn::layout_t<nn::layout_zxynpq_i16>::layout;
         nn_workload_data_coords_t size( 1, 1, 1, static_cast<uint32_t>(bias.size[0]), 1, 1 );
         auto result = new nn::workload_data<int32_t>(size, layout);
         for (auto index = 0u; index < result->get_length(3); ++index) {

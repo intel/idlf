@@ -26,6 +26,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "tester/g_ult/unit_tests/cpu/naive_implementations.h"
+#include <gtest/gtest.h>
 
 namespace
 {
@@ -40,12 +41,22 @@ bool run_work_item(nn_workload_item* &work_item, nn_device_t* device)
 void destroy_work_item(
     nn_workload_item* &work_item)
 {
-    work_item->input.clear();
+    for(auto& parameter : work_item->parameters)
+    {
+        delete parameter;
+        parameter = nullptr;
+    }
 
-    delete reinterpret_cast<nn::workload_data<float>*>(work_item->output[0]);
+    for(auto& output : work_item->output)
+    {
+        delete output;
+        output = nullptr;
+    }
+
+    delete work_item->primitive;
+    work_item->primitive = nullptr;
 
     delete work_item;
-
     work_item = nullptr;
 }
 
@@ -86,6 +97,7 @@ void create_and_initialize_input_item(nn_workload_item *&work_item,
                                       const nn::data<float, 4> &input) {
     work_item = new nn_workload_item();
     work_item->type = NN_WORK_ITEM_TYPE_INPUT;
+    work_item->primitive = nullptr;
     work_item->arguments.input.index = 0;
     work_item->output = primitive->create_input(input);
 }
@@ -105,6 +117,7 @@ T_primitive *create_and_initialize_work_item(nn_workload_item *&work_item,
                                              nn_device_t *device) {
     auto input_item = new nn_workload_item();
     input_item->type = NN_WORK_ITEM_TYPE_INPUT;
+    input_item->primitive = nullptr;
     input_item->arguments.input.index = 0;
 
     work_item = new nn_workload_item();

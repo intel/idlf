@@ -31,5 +31,5 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace layer
 {
-    void run_parameter_update(nn_workload_item *const work_item);
+    void run_parameter_update(nn_workload_item *const work_item, nn_device_internal *device);
 }

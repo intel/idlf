@@ -57,18 +57,18 @@ class normalization_elementwise_linear_f32 : public helper_zxyn_f32::primitive_z
     virtual size_t get_required_input_h() override;
 
   private:
-    void forward(const nn::workload_data<float> *input, nn::workload_data<float> *output);
+    void forward(const nn::workload_data<> *input, nn::workload_data<> *output);
 
-    void run_multithreaded_1d_normalization_work_item(const nn::workload_data<float> *input_view,
-                                                      nn::workload_data<float> *output_view);
-    void choose_normalization_work_item_linear_single_batching_mode(const nn::workload_data<float> *input_view,
-                                                                    nn::workload_data<float> *output_view);
-    void run_normalization_work_item_linear_single_latency(const nn::workload_data<float> *input_view,
-                                                           nn::workload_data<float> *output_view);
-    void run_normalization_work_item_linear_single_batch8X(const nn::workload_data<float> *input_view,
-                                                           nn::workload_data<float> *output_view);
-    void run_normalization_work_item_linear_single_batch8(const nn::workload_data<float> *input_view,
-                                                          nn::workload_data<float> *output_view);
+    void run_multithreaded_1d_normalization_work_item(const nn::workload_data<> *input_view,
+                                                      nn::workload_data<> *output_view);
+    void choose_normalization_work_item_linear_single_batching_mode(const nn::workload_data<> *input_view,
+                                                                    nn::workload_data<> *output_view);
+    void run_normalization_work_item_linear_single_latency(const nn::workload_data<> *input_view,
+                                                           nn::workload_data<> *output_view);
+    void run_normalization_work_item_linear_single_batch8X(const nn::workload_data<> *input_view,
+                                                           nn::workload_data<> *output_view);
+    void run_normalization_work_item_linear_single_batch8(const nn::workload_data<> *input_view,
+                                                          nn::workload_data<> *output_view);
 
     friend void unpack_1d_normalization_callback_handle(void *void_handle);
 };
@@ -89,21 +89,30 @@ class normalization_response_across_maps_f32 : public helper_zxyn_f32::primitive
                                            size_t output_padding_bottom,
                                            nn_device_internal *device);
 
+    ~normalization_response_across_maps_f32();
+
     virtual bool validate_input(size_t index, nn_workload_data_t *data) override;
+
+    virtual std::vector<nn_workload_data_t *> create_outputs(bool allocate_delta = false) override;
 
     virtual void forward(const std::vector<const nn_workload_data_t *> &inputs,
                          const std::vector<const nn_workload_data_t *> &parameters,
                          const std::vector<nn_workload_data_t *> &outputs) override;
 
-    virtual void dispatch_backward(const nn::workload_data<float> *forward_input,
-                                   const nn::workload_data<float> *forward_output,
-                                   const nn::workload_data<float> *backward_input,
-                                   nn::workload_data<float> *backward_output);
+    virtual void dispatch_backward(
+            const nn::workload_data<> *forward_input,
+            const nn::workload_data<> *forward_intermediate_data,
+            const nn::workload_data<> *forward_output,
+            const nn::workload_data<> *backward_input,
+            nn::workload_data<> *backward_output);
 
-    virtual void backward(const nn::workload_data<float> *forward_input,
-                          const nn::workload_data<float> *forward_output,
-                          const nn::workload_data<float> *backward_input,
-                          nn::workload_data<float> *backward_output);
+    virtual void backward(
+            const nn::workload_data<> *forward_input,
+            const nn::workload_data<> *forward_intermediate_data,
+            const nn::workload_data<> *forward_output,
+            const nn::workload_data<> *backward_input,
+            nn::workload_data<> *backward_output);
+
     void backward(const std::vector<nn_workload_data_t *> &inputs,
                   const std::vector<const nn_workload_data_t *> &parameters,
                   const std::vector<const nn_workload_data_t *> &outputs) override;
@@ -119,13 +128,22 @@ class normalization_response_across_maps_f32 : public helper_zxyn_f32::primitive
     virtual size_t get_required_input_h() override;
 
   private:
-    void forward(const nn::workload_data<float> *input, nn::workload_data<float> *output);
+    void forward(
+        const nn::workload_data<> *input,
+        nn::workload_data<> *output,
+        nn::workload_data<> *intermediate_output);
 
     friend void unpack_3d_normalization_callback_handle(void *void_handle);
-    void run_multithreaded_3d_normalization_work_item(const nn::workload_data<float> *input,
-                                                      nn::workload_data<float> *output);
-    void run_3d_normalization_work_item(const nn::workload_data<float> *input_view,
-                                        nn::workload_data<float> *output_view);
+
+    void run_multithreaded_3d_normalization_work_item(
+        const nn::workload_data<> *input,
+        nn::workload_data<> *output,
+        nn::workload_data<> *intermediate_output);
+
+    void run_3d_normalization_work_item(
+        const nn::workload_data<> *input_view,
+        nn::workload_data<> *output_view,
+        nn::workload_data<> *intermediate_output);
 };
 
 void wrapper_normalization_work_item_backward(nn_workload_item *const work_item);

@@ -38,14 +38,20 @@ class relu_f32 : public helper_zxyn_f32::primitive_zxyn_f32_base {
                          const std::vector<const nn_workload_data_t *> &parameters,
                          const std::vector<nn_workload_data_t *> &outputs) override;
 
+    void forward_internal(const nn::workload_data<> *input, nn::workload_data<> *output);
+
     virtual void backward(const std::vector<nn_workload_data_t *> &inputs,
                           const std::vector<const nn_workload_data_t *> &parameters,
                           const std::vector<const nn_workload_data_t *> &outputs) override;
 
-    virtual void backward(const nn::workload_data<float> *forward_input,
-                          const nn::workload_data<float> *forward_output,
-                          const nn::workload_data<float> *backward_input,
-                          nn::workload_data<float> *backward_output);
+    void backward_internal(const nn::workload_data<> *forward_input,
+                           const nn::workload_data<> *backward_input,
+                           nn::workload_data<> *backward_output);
+
+    void dispatch_backward(const nn::workload_data<> *forward_input,
+                           const nn::workload_data<> *backward_input,
+                           nn::workload_data<> *backward_output);
+
 
     relu_f32(size_t image_size_x,
              size_t image_size_y,
@@ -61,12 +67,40 @@ class relu_f32 : public helper_zxyn_f32::primitive_zxyn_f32_base {
     virtual size_t get_required_input_w() override;
     virtual size_t get_required_input_h() override;
 
-  private:
-    void forward(const nn::workload_data<float> *input, nn::workload_data<float> *output);
-
+private:
     virtual bool validate_input(size_t index, nn_workload_data_t *data) override;
 };
 
-void run_relu(nn_workload_item *const work_item);
+class relu_1d_f32 : public nn_primitive_t {
+  public:
+    virtual void forward(const std::vector<const nn_workload_data_t *> &inputs,
+                         const std::vector<const nn_workload_data_t *> &parameters,
+                         const std::vector<nn_workload_data_t *> &outputs) override;
+
+    virtual void backward(const std::vector<nn_workload_data_t *> &inputs,
+                          const std::vector<const nn_workload_data_t *> &parameters,
+                          const std::vector<const nn_workload_data_t *> &outputs) override;
+
+    void backward_internal(const nn::workload_data<> *forward_input,
+                           const nn::workload_data<> *backward_input,
+                           nn::workload_data<> *backward_output);
+
+    relu_1d_f32(size_t num_input,
+                size_t batch_size,
+                nn_device_internal *device);
+
+    virtual std::vector<nn_workload_data_t *> create_inputs(bool allocate_delta = false) override;
+
+    virtual std::vector<nn_workload_data_t *> create_outputs(bool allocate_delta = false) override;
+
+    virtual bool validate_input(size_t index, nn_workload_data_t *data) override;
+
+  private:
+    void forward_internal(const nn::workload_data<> *input, nn::workload_data<> *output);
+
+    const size_t num_input, batch_size;
+    nn_device_internal *const device;
+};
+
 void run_relu_backward(nn_workload_item *const work_item);
 }

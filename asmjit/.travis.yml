@@ -1,0 +1,44 @@
+language: cpp
+
+os:
+  - linux
+  - osx
+
+compiler:
+  - clang
+  - gcc
+
+env:
+  matrix:
+    - BUILD_TYPE=Debug   CFLAGS=-m32 CXXFLAGS=-m32
+    - BUILD_TYPE=Debug   CFLAGS=-m64 CXXFLAGS=-m64
+    - BUILD_TYPE=Release CFLAGS=-m32 CXXFLAGS=-m32
+    - BUILD_TYPE=Release CFLAGS=-m64 CXXFLAGS=-m64
+
+matrix:
+  exclude:
+    - os: osx
+      compiler: gcc
+
+before_install:
+  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then sudo add-apt-repository ppa:kubuntu-ppa/backports -y; fi;
+  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then sudo apt-get -qq update; fi;
+  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then sudo apt-get -qq install cmake gcc-multilib g++-multilib valgrind; fi;
+
+before_script:
+  - mkdir build
+  - cd build
+  - cmake --version
+  - cmake .. -G"Unix Makefiles" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DASMJIT_BUILD_TEST=1 -DASMJIT_BUILD_SAMPLES=1
+  - cd ..
+
+script:
+  - cd build
+  - make
+  - cd ..
+
+  - ./build/asmjit_test_unit
+  - ./build/asmjit_test_x86
+
+after_success:
+  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then valgrind --leak-check=full --show-reachable=yes ./build/asmjit_test_unit; fi;
