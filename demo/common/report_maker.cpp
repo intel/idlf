@@ -36,7 +36,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 C_report_maker::C_report_maker(std::string _appname,
                                std::string _device_name,
                                std::string _model,
-                                  uint16_t _batch_size)
+                                  uint32_t _batch_size)
 {
     appname = _appname;
     device_name = _device_name;
